@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ConfigService } from './config.service';
 import { ensureDir } from '../config';
+import { httpFetch, isTimeoutError, networkHint } from './http';
 
 export interface ReleaseInfo {
   version: string;
@@ -46,9 +47,9 @@ export class UpdateService {
     if (pat) headers.Authorization = `token ${pat}`;
 
     try {
-      const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
+      const resp = await httpFetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`, {
         headers,
-        signal: AbortSignal.timeout(5000),
+        timeoutMs: 8000,
       });
       if (!resp.ok) return null;
       const j = (await resp.json()) as {
@@ -66,10 +67,20 @@ export class UpdateService {
     }
   }
 
+  /** Release 页面地址（下载失败时引导用户手动下载） */
+  releasePage(): string {
+    const { owner, repo } = this.config.load().update;
+    return owner && repo ? `https://github.com/${owner}/${repo}/releases/latest` : 'GitHub Release 页面';
+  }
+
   /** [P1] 下载当前平台安装包并校验 SHA256（若 Release 附带 .sha256） */
   async download(): Promise<{ path: string; version: string; verified: boolean }> {
     const info = await this.check();
-    if (!info) throw new Error('未获取到更新信息（更新源不可达或无 Release）');
+    if (!info) {
+      throw new Error(
+        '未获取到更新信息：GitHub API 不可达或仓库没有 Release。受限网络下可设置 HTTPS_PROXY 环境变量后重启应用。'
+      );
+    }
     const asset = pickAsset(info.assets);
     if (!asset) throw new Error('Release 中未找到当前平台的安装包');
 
@@ -77,7 +88,18 @@ export class UpdateService {
     ensureDir(dir);
     const file = path.join(dir, asset.name);
 
-    const resp = await fetch(asset.url, { signal: AbortSignal.timeout(300000) });
+    let resp: Response;
+    try {
+      resp = await httpFetch(asset.url, { timeoutMs: 600000 });
+    } catch (e) {
+      const page = this.releasePage();
+      if (isTimeoutError(e)) {
+        throw new Error(
+          `下载超时：从 GitHub 下载 ${asset.name} 过慢或被限速。可到 ${page} 手动下载安装包，或用浏览器/下载工具拿到文件后覆盖安装。`
+        );
+      }
+      throw new Error(`下载更新包失败：${networkHint(e)}`);
+    }
     if (!resp.ok) throw new Error(`下载失败 HTTP ${resp.status}`);
     const buf = Buffer.from(await resp.arrayBuffer());
     fs.writeFileSync(file, buf);
@@ -85,7 +107,7 @@ export class UpdateService {
     let verified = false;
     const shaAsset = info.assets.find((a) => a.name === `${asset.name}.sha256`);
     if (shaAsset) {
-      const shaResp = await fetch(shaAsset.url, { signal: AbortSignal.timeout(10000) });
+      const shaResp = await httpFetch(shaAsset.url, { timeoutMs: 15000 });
       const expected = (await shaResp.text()).trim().split(/\s+/)[0];
       const actual = crypto.createHash('sha256').update(buf).digest('hex');
       if (expected && expected.toLowerCase() !== actual) {

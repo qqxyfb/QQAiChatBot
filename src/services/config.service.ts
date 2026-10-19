@@ -86,9 +86,14 @@ export class ConfigService {
 
   validate(cfg: GlobalConfig): string[] {
     const errors: string[] = [];
+    if (!cfg || typeof cfg !== 'object') return ['配置内容为空'];
+    if (!cfg.llm || typeof cfg.llm !== 'object') return ['缺少 llm 配置'];
+    if (!cfg.server || typeof cfg.server !== 'object') return ['缺少 server 配置'];
     if (!cfg.llm.baseUrl) errors.push('LLM Base URL 不能为空');
     if (!cfg.llm.model) errors.push('LLM 模型不能为空');
-    if (cfg.server.port < 1 || cfg.server.port > 65535) errors.push('端口需在 1~65535 之间');
+    if (!Number.isFinite(cfg.server.port) || cfg.server.port < 1 || cfg.server.port > 65535) {
+      errors.push('端口需在 1~65535 之间');
+    }
     if (cfg.server.allowLan) {
       const token = cfg.server.accessToken === '***' ? this.load().server.accessToken : cfg.server.accessToken;
       if (!token || token.length < 8) errors.push('开启外网访问必须配置至少 8 位的访问令牌');

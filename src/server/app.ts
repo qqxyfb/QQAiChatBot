@@ -23,6 +23,27 @@ export async function buildApp(deps: RouteDeps, opts: AppOptions): Promise<Fasti
   const webDist = resolveWebDir();
 
   await app.register(fastifyWebsocket);
+
+  // 宽容解析 application/json：空 body 视为「无参数」，而不是 400。
+  // 启动/停止/全部停止/下载更新这类按钮操作都没有请求体，Fastify 默认会以
+  // FST_ERR_CTP_EMPTY_JSON_BODY（"Body cannot be empty when content-type is set to
+  // 'application/json'"）直接拒绝，前端只能看到这条让人摸不着头脑的报错。
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const text = typeof body === 'string' ? body.trim() : '';
+    if (!text) {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(text));
+    } catch (err) {
+      const e = err as Error & { statusCode?: number; code?: string };
+      e.statusCode = 400; // 缺省会被当作 500，前端只能看到 Internal Server Error
+      e.code = 'FST_ERR_CTP_INVALID_JSON_BODY';
+      done(e, undefined);
+    }
+  });
+
   app.addHook('onRequest', makeAuthHook(() => opts.accessToken, () => opts.allowLan));
 
   registerRoutes(app, { ...deps, webReady: () => webDist !== null });

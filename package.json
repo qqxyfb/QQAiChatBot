@@ -1,6 +1,6 @@
 {
   "name": "qqaichatbot",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "QQ AI 聊天机器人多连接后台客户端",
   "main": "electron/main.cjs",
@@ -26,6 +26,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.1",
+    "undici": "^7.30.1",
     "uuid": "^11.0.5",
     "ws": "^8.18.0",
     "zustand": "^5.0.2"

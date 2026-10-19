@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Layout, Menu, Select, Space, Typography, message } from 'antd';
+import { Alert, Button, Layout, Menu, Modal, Select, Space, Typography, message } from 'antd';
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from './store';
 import { api } from './api/client';
@@ -53,6 +53,7 @@ function Shell() {
     current: string;
     latest: { version: string; changelog: string } | null;
   } | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     loadConnections().catch(() => undefined);
@@ -117,18 +118,23 @@ function Shell() {
               action={
                 <Button
                   size="small"
+                  loading={downloading}
                   onClick={async () => {
+                    setDownloading(true);
                     try {
                       const r = await api.post<{ path: string; version: string; verified: boolean }>(
                         '/api/update/download'
                       );
-                      message.success(`已下载到 ${r.path}${r.verified ? '（SHA256 校验通过）' : ''}`);
+                      message.success(`已下载到 ${r.path}${r.verified ? '（SHA256 校验通过）' : ''}`, 6);
                     } catch (e) {
-                      message.error((e as Error).message);
+                      // 安装包约 100MB+，失败原因往往较长（超时/网络/手动下载地址），用弹窗展示更可读
+                      Modal.error({ title: '下载更新失败', content: (e as Error).message, okText: '知道了' });
+                    } finally {
+                      setDownloading(false);
                     }
                   }}
                 >
-                  下载更新
+                  {downloading ? '下载中…' : '下载更新'}
                 </Button>
               }
             />
