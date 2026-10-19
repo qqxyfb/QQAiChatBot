@@ -40,10 +40,14 @@ npm run pack          # NSIS 安装版 + portable → release/
 
 产物：
 
-- `release/QQAiChatBot-<ver>-x64.exe` — NSIS 安装版（安装向导 / 快捷方式 / 卸载项）
-- `release/QQAiChatBot-portable-<ver>.exe` — 便携版单文件
+- `release/QQAiChatBot-Setup-<ver>-x64.exe` — NSIS 安装版（安装向导 / 快捷方式 / 卸载项）
+- `release/QQAiChatBot-Portable-<ver>.exe` — 便携版单文件
 
+> **Electron 版本硬性要求**：`electron-builder.yml` 已锁定 `electronVersion: 37.10.3`（内置 Node 22.21）。Electron 33/34 内置 Node 20，**不支持 `node:sqlite`**，打出的包服务进程会启动即崩溃。升级 Electron 时务必确认内置 Node ≥ 22.5。
+>
 > 无管理员权限环境已设置 `signAndEditExecutable: false`：exe 使用默认 Electron 图标且未签名（SmartScreen 可能提示）。有签名证书后可移除该配置。
+>
+> 发布前建议跑 `node scripts/verify-asar.cjs <app.asar>`，确认 `dist/`、`web/dist/`、迁移脚本都已打进包内。
 
 ## 冒烟验证
 

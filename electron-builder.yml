@@ -2,6 +2,10 @@ appId: com.qqxyfb.qqaichatbot
 productName: QQAiChatBot
 copyright: Copyright © 2026 qqxyfb
 
+# 必须使用内置 Node >= 22.5 的 Electron（node:sqlite 依赖）
+# Electron 33/34 内置 Node 20，不支持 node:sqlite，会导致服务进程启动即崩溃
+electronVersion: 37.10.3
+
 directories:
   output: release
   buildResources: resources
@@ -26,6 +30,8 @@ win:
   artifactName: QQAiChatBot-${version}-${arch}.${ext}
 
 nsis:
+  # 名称含 Setup，供客户端更新检测（pickAsset 优先匹配 setup/installer）
+  artifactName: QQAiChatBot-Setup-${version}-${arch}.${ext}
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
@@ -34,7 +40,7 @@ nsis:
   shortcutName: QQ AI ChatBot
 
 portable:
-  artifactName: QQAiChatBot-portable-${version}.exe
+  artifactName: QQAiChatBot-Portable-${version}.${ext}
 
 linux:
   target:

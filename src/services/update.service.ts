@@ -14,8 +14,25 @@ export interface ReleaseInfo {
 export class UpdateService {
   constructor(private config: ConfigService, private dataDir: string) {}
 
+  /**
+   * 当前版本号。
+   * 打包后（Electron asar / SEA）没有 npm_package_version，必须回落到 package.json，
+   * 否则升级后仍读旧硬编码版本，导致「永远提示有新版」。
+   */
   currentVersion(): string {
-    return process.env.npm_package_version || '0.1.0';
+    if (process.env.npm_package_version) return process.env.npm_package_version;
+    // dist/services/update.service.js → ../../package.json；SEA/其他布局再兜底一次
+    for (const rel of ['../../package.json', '../package.json']) {
+      try {
+        const p = path.join(__dirname, rel);
+        if (!fs.existsSync(p)) continue;
+        const pkg = JSON.parse(fs.readFileSync(p, 'utf8')) as { version?: string };
+        if (pkg.version) return pkg.version;
+      } catch {
+        /* 忽略，继续尝试下一个路径 */
+      }
+    }
+    return '0.1.0';
   }
 
   async check(): Promise<ReleaseInfo | null> {
