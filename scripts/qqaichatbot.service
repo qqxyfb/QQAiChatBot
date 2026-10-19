@@ -1,0 +1,15 @@
+[Unit]
+Description=QQ AI ChatBot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/qqaichatbot
+ExecStart=/usr/bin/node --experimental-sqlite /opt/qqaichatbot/dist/main.js
+Restart=on-failure
+RestartSec=5
+User=qqaichatbot
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

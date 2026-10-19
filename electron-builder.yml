@@ -1,0 +1,41 @@
+appId: com.qqxyfb.qqaichatbot
+productName: QQAiChatBot
+copyright: Copyright © 2026 qqxyfb
+
+directories:
+  output: release
+  buildResources: resources
+
+files:
+  - dist/**/*
+  - web/dist/**/*
+  - resources/**/*
+  - electron/**/*
+  - package.json
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: QQAiChatBot-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: QQ AI ChatBot
+
+portable:
+  artifactName: QQAiChatBot-portable-${version}.exe
+
+linux:
+  target:
+    - tar.gz
+  category: Utility
+  artifactName: QQAiChatBot-linux-${version}.${ext}

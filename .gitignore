@@ -2,6 +2,7 @@
 node_modules/
 dist/
 build/
+release/
 *.tsbuildinfo
 
 # 运行时数据（用户数据，不提交）
