@@ -32,14 +32,18 @@ npm start              # node --experimental-sqlite dist/main.js
 
 浏览器访问 `http://127.0.0.1:8700`。
 
-### 打包（可选，需额外安装 Electron 依赖）
+### 打包
 
 ```bash
-npm i -D electron electron-builder
-npm run pack          # 产出 NSIS 安装版 + portable 到 release/
+npm run pack          # NSIS 安装版 + portable → release/
 ```
 
-> Electron 二进制较大（约 100MB），默认未列入依赖，避免仅运行/开发时下载过久。
+产物：
+
+- `release/QQAiChatBot-<ver>-x64.exe` — NSIS 安装版（安装向导 / 快捷方式 / 卸载项）
+- `release/QQAiChatBot-portable-<ver>.exe` — 便携版单文件
+
+> 无管理员权限环境已设置 `signAndEditExecutable: false`：exe 使用默认 Electron 图标且未签名（SmartScreen 可能提示）。有签名证书后可移除该配置。
 
 ## 冒烟验证
 

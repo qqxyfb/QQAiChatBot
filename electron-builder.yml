@@ -16,6 +16,8 @@ files:
 asar: true
 
 win:
+  # 无管理员权限环境无法解压 winCodeSign（符号链接），关闭签名与 exe 资源编辑
+  signAndEditExecutable: false
   target:
     - target: nsis
       arch: [x64]

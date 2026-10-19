@@ -3,6 +3,8 @@ node_modules/
 dist/
 build/
 release/
+release-portable/
+release-artifacts/
 *.tsbuildinfo
 
 # 运行时数据（用户数据，不提交）
