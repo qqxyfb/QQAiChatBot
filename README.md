@@ -56,6 +56,31 @@ node scripts/smoke-pipeline.cjs   # 上下文/安全过滤/LLM 演示/打点
 curl http://127.0.0.1:8700/api/health
 ```
 
+### 前端托管回归验证（必跑）
+
+```bash
+npm run verify        # build + 从临时目录启动，断言 / 与 /config 返回 index.html
+```
+
+该脚本故意把工作目录切到系统临时目录再启动 `dist/main.js`，专门防止「打包后 cwd 不可控导致前端 404」的问题回归。
+
+## 常见问题
+
+### 安装后打开是黑屏，窗口里显示 `{"message":"Route GET:/ not found",...}`
+
+服务已在监听，但没找到前端产物 `web/dist/index.html`，于是 Fastify 用默认 404 JSON 应答根路径。
+
+历史原因：`src/server/app.ts` 曾用 `process.cwd()` 拼 `web/dist`。Electron 以子进程拉起服务核心时 cwd 由启动方式决定（快捷方式、便携版解压目录、命令行），并不等于安装目录，打包版必然找不到前端。
+
+现已改为：Electron 主进程通过 `QQAICHATBOT_WEB_DIR` / `QQAICHATBOT_APP_ROOT` 显式下发目录，服务端再用 `__dirname` 兜底，完全不再依赖 cwd；同时缺失产物时返回可读的 503 诊断页而不是裸 JSON。
+
+排查顺序：
+
+1. 看 `%APPDATA%\QQAiChatBot\electron.log`（桌面端启动全过程：端口、健康检查、加载结果）。
+2. 浏览器访问 `http://127.0.0.1:8700`；能打开说明是桌面端问题，打不开看 `data\logs\server\*.log`。
+3. `node scripts/verify-asar.cjs release/win-unpacked/resources/app.asar` 确认 `/web/dist/index.html` 已打进包内。
+4. 端口被占用时桌面端会自动从 8700 向后顺延，实际端口见 `electron.log`。
+
 ## 目录结构
 
 ```

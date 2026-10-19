@@ -47,6 +47,9 @@ logs/
 # H3CAIWORK 本地工作数据
 .h3caiwork/
 
+# 本地代理工作区数据（不应进入版本库）
+.workbuddy/
+
 # 系统
 .DS_Store
 Thumbs.db

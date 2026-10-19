@@ -57,7 +57,7 @@ export class UpdateService {
         assets?: Array<{ name: string; browser_download_url: string }>;
       };
       return {
-        version: j.tag_name || '',
+        version: normalizeVersion(j.tag_name || ''),
         changelog: j.body || '',
         assets: (j.assets || []).map((a) => ({ name: a.name, url: a.browser_download_url })),
       };
@@ -96,6 +96,11 @@ export class UpdateService {
 
     return { path: file, version: info.version, verified };
   }
+}
+
+/** 版本号归一化：GitHub tag 常带 v 前缀（v0.1.0），与 package.json 的 0.1.0 直接比较会误报有新版 */
+function normalizeVersion(v: string): string {
+  return v.trim().replace(/^v/i, '');
 }
 
 /** 按当前平台选择产物：Windows 优先安装版，其次便携版；Linux 取 tar.gz */

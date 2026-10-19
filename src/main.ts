@@ -24,7 +24,7 @@ import { ConnectionService } from './services/connection.service';
 import { ConnectionManager } from './manager/connection-manager';
 import { bus, emit } from './events/bus';
 import { buildApp } from './server/app';
-import { ensureDir, paths, resolveDataDir, resolveResourceDir } from './config';
+import { ensureDir, paths, resolveAppRoot, resolveDataDir, resolveResourceDir } from './config';
 import { dayStr } from './utils/time';
 
 async function main(): Promise<void> {
@@ -36,7 +36,10 @@ async function main(): Promise<void> {
   const db = Database.open(p.dbFile);
   const migrationsDir = fs.existsSync(path.join(__dirname, 'db', 'migrations'))
     ? path.join(__dirname, 'db', 'migrations')
-    : path.join(process.cwd(), 'src', 'db', 'migrations');
+    : path.join(resolveAppRoot(), 'src', 'db', 'migrations');
+  if (!fs.existsSync(migrationsDir)) {
+    throw new Error(`未找到数据库迁移脚本：${migrationsDir}`);
+  }
   migrate(db, loadMigrations(migrationsDir), p.dbFile);
 
   // 2) 仓储

@@ -18,6 +18,8 @@ export interface RouteDeps {
   history: HistoryService;
   update: UpdateService;
   banword: BanwordRepo;
+  /** 前端产物是否就绪（用于 /api/health 自检与桌面端启动判断） */
+  webReady?: () => boolean;
 }
 
 const ok = <T>(data: T) => ({ code: 0, data, message: 'ok' });
@@ -31,7 +33,9 @@ function qid(req: FastifyRequest): string {
 
 export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
   // ---------------- health ----------------
-  app.get('/api/health', async () => ok({ status: 'up', version: d.update.currentVersion() }));
+  app.get('/api/health', async () =>
+    ok({ status: 'up', version: d.update.currentVersion(), web: d.webReady ? d.webReady() : true })
+  );
 
   // ---------------- connections ----------------
   app.get('/api/connections', async () => ok(d.connection.list()));

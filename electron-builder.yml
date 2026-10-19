@@ -19,6 +19,11 @@ files:
 
 asar: true
 
+# 前端产物与迁移脚本从 asar 解包：@fastify/static 直接读盘，避免 asar 流式读取的兼容问题
+asarUnpack:
+  - web/dist/**/*
+  - dist/db/migrations/**/*
+
 win:
   # 无管理员权限环境无法解压 winCodeSign（符号链接），关闭签名与 exe 资源编辑
   signAndEditExecutable: false

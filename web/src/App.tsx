@@ -21,6 +21,22 @@ const MENU = [
   { key: '/history', label: '聊天记录' },
 ];
 
+/**
+ * 是否有更新：必须逐段比较，不能用 !== 判断。
+ * 否则高版本运行时（例如本地 0.1.1、线上 latest 仍为 0.1.0）会误报「发现新版本 0.1.0」。
+ */
+function isNewerVersion(latest: string, current: string): boolean {
+  const parse = (v: string) => v.replace(/^v/i, '').split(/[.-]/).map((s) => Number.parseInt(s, 10) || 0);
+  const a = parse(latest);
+  const b = parse(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -91,7 +107,7 @@ function Shell() {
           </Space>
         </Layout.Header>
         <Layout.Content style={{ padding: 24 }}>
-          {updateInfo?.latest && updateInfo.latest.version !== updateInfo.current && (
+          {updateInfo?.latest && isNewerVersion(updateInfo.latest.version, updateInfo.current) && (
             <Alert
               type="info"
               showIcon
