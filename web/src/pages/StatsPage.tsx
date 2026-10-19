@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Col, Row, Segmented, Space, Statistic, Table, message } from 'antd';
 import ReactECharts from 'echarts-for-react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAppStore } from '../store';
 
@@ -34,7 +35,8 @@ const axisStyle = { axisLine: { lineStyle: { color: '#555' } }, axisLabel: { col
 const splitStyle = { splitLine: { lineStyle: { color: '#2a2a2a' } } };
 
 export default function StatsPage() {
-  const { activeConnectionId } = useAppStore();
+  const { activeConnectionId, setHistoryFromHash } = useAppStore();
+  const navigate = useNavigate();
   const [ov, setOv] = useState<Overview | null>(null);
   const [series, setSeries] = useState<SeriesPoint[]>([]);
   const [hourly, setHourly] = useState<HourPoint[]>([]);
@@ -220,6 +222,13 @@ export default function StatsPage() {
           rowKey="fromHash"
           dataSource={top}
           pagination={false}
+          onRow={(r) => ({
+            onClick: () => {
+              setHistoryFromHash(r.fromHash);
+              navigate('/history');
+            },
+            style: { cursor: 'pointer' },
+          })}
           columns={[
             { title: '对象（哈希）', dataIndex: 'fromHash' },
             { title: '消息数', dataIndex: 'messages' },

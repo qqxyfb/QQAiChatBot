@@ -25,7 +25,7 @@ interface MessageRow {
 }
 
 export default function HistoryPage() {
-  const { activeConnectionId } = useAppStore();
+  const { activeConnectionId, historyFromHash, setHistoryFromHash } = useAppStore();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -38,6 +38,15 @@ export default function HistoryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeConnectionId]);
 
+  // 从统计页「Top 对象」下钻
+  useEffect(() => {
+    if (!historyFromHash) return;
+    setFromHash(historyFromHash);
+    void loadMessages(1, historyFromHash);
+    setHistoryFromHash('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyFromHash]);
+
   async function loadSessions() {
     const q = activeConnectionId ? `?connectionId=${activeConnectionId}` : '';
     try {
@@ -47,10 +56,10 @@ export default function HistoryPage() {
     }
   }
 
-  async function loadMessages(p = 1) {
+  async function loadMessages(p = 1, hash = fromHash) {
     const params = new URLSearchParams();
     if (activeConnectionId) params.set('connectionId', activeConnectionId);
-    if (fromHash) params.set('fromHash', fromHash);
+    if (hash) params.set('fromHash', hash);
     if (keyword) params.set('keyword', keyword);
     params.set('page', String(p));
     params.set('pageSize', '50');
