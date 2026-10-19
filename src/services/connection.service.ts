@@ -39,6 +39,8 @@ export function defaultConnectionConfig(name: string, type: ConnectorType): Conn
       rateLimit: { maxPerMinute: 20, minIntervalMs: 1000 },
       budgetAlertPct: 80,
       trigger: 'at',
+      triggerKeywords: [],
+      randomProbability: 0.1,
     },
   };
 }
@@ -86,11 +88,21 @@ export class ConnectionService {
     });
   }
 
-  create(input: { name: string; type: ConnectorType }): ConnectionConfig {
+  create(input: { name: string; type: ConnectorType; copyFrom?: string }): ConnectionConfig {
     if (!input.name?.trim()) throw new Error('连接名称不能为空');
     const max = this.config.load().maxConnections;
     if (this.repo.list().length >= max) throw new Error(`已达最大连接数 ${max}`);
-    const cfg = defaultConnectionConfig(input.name.trim(), input.type);
+
+    let cfg: ConnectionConfig;
+    if (input.copyFrom) {
+      const src = this.get(input.copyFrom);
+      if (!src) throw new Error('源连接不存在');
+      cfg = JSON.parse(JSON.stringify(src)) as ConnectionConfig;
+      cfg.connectionId = `conn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      cfg.name = input.name.trim();
+    } else {
+      cfg = defaultConnectionConfig(input.name.trim(), input.type);
+    }
     this.repo.upsert(this.encrypt(cfg), 'stopped');
     return cfg;
   }

@@ -162,6 +162,33 @@ export class StatsService {
     return { today, week, month, monthEstimate: Number((week / 7 * 30).toFixed(4)) };
   }
 
+  /** [P1] 分连接对比（今日） */
+  perConnection(): Array<{ connectionId: string; name: string; messages: number; tokens: number; cost: number }> {
+    const since = dayStartMs();
+    const conns = this.db
+      .prepare('SELECT connection_id, name FROM connection ORDER BY created_at ASC')
+      .all() as unknown as Array<{ connection_id: string; name: string }>;
+    const rows = this.db
+      .prepare(
+        `SELECT connection_id AS cid, COUNT(*) AS messages,
+                COALESCE(SUM(prompt_tokens),0) AS p, COALESCE(SUM(completion_tokens),0) AS c
+         FROM message_log WHERE ts >= ? GROUP BY connection_id`
+      )
+      .all(since) as unknown as Array<{ cid: string; messages: number; p: number; c: number }>;
+    const map = new Map(rows.map((r) => [r.cid, r]));
+    return conns.map((c) => {
+      const r = map.get(c.connection_id);
+      const tokens = (r?.p ?? 0) + (r?.c ?? 0);
+      return {
+        connectionId: c.connection_id,
+        name: c.name,
+        messages: r?.messages ?? 0,
+        tokens,
+        cost: this.costFor(c.connection_id, since),
+      };
+    });
+  }
+
   private costFor(connectionId: string | undefined, since: number): number {
     const { clause, args } = this.where(connectionId, since);
     const rows = this.db

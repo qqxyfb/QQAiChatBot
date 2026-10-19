@@ -28,6 +28,8 @@ export default function ConnectionsPage() {
   const [detailForm] = Form.useForm();
   const [personas, setPersonas] = useState<Array<{ id: string; name: string }>>([]);
   const [riskOpen, setRiskOpen] = useState(false);
+  const [copyTarget, setCopyTarget] = useState<ConnectionItem | null>(null);
+  const [copyForm] = Form.useForm();
 
   useEffect(() => {
     api
@@ -35,6 +37,24 @@ export default function ConnectionsPage() {
       .then(setPersonas)
       .catch(() => undefined);
   }, []);
+
+  async function doCopy() {
+    if (!copyTarget) return;
+    try {
+      const v = await copyForm.validateFields();
+      await api.post('/api/connections', {
+        name: v.name,
+        type: copyTarget.type,
+        copyFrom: copyTarget.connectionId,
+      });
+      message.success('已复制连接');
+      setCopyTarget(null);
+      await loadConnections();
+    } catch (e) {
+      if ((e as { errorFields?: unknown }).errorFields) return;
+      message.error((e as Error).message);
+    }
+  }
 
   async function create() {
     try {
@@ -73,6 +93,12 @@ export default function ConnectionsPage() {
       maxInputLen: chat.maxInputLen,
       maxPerMinute: (chat.rateLimit as { maxPerMinute?: number })?.maxPerMinute,
       minIntervalMs: (chat.rateLimit as { minIntervalMs?: number })?.minIntervalMs,
+      trigger: chat.trigger,
+      triggerKeywords: ((chat.triggerKeywords as string[]) ?? []).join('\n'),
+      randomProbability: chat.randomProbability,
+      llmBaseUrl: c.llmOverride?.baseUrl,
+      llmApiKey: c.llmOverride?.apiKey,
+      llmModel: c.llmOverride?.model,
     });
   }
 
@@ -89,6 +115,15 @@ export default function ConnectionsPage() {
         name: v.name,
         personaId: v.personaId,
         riskConfirmed: Boolean(v.riskConfirmed),
+        llmOverride: v.llmBaseUrl
+          ? {
+              baseUrl: v.llmBaseUrl,
+              apiKey: v.llmApiKey || '',
+              model: v.llmModel || '',
+              temperature: 0.8,
+              maxTokens: 512,
+            }
+          : undefined,
         official:
           detail.type === 'official'
             ? { appId: v.appId, appSecret: v.appSecret, apiDomain: v.apiDomain }
@@ -111,6 +146,12 @@ export default function ConnectionsPage() {
           dailyTokenBudget: v.dailyTokenBudget,
           maxInputLen: v.maxInputLen,
           rateLimit: { maxPerMinute: v.maxPerMinute, minIntervalMs: v.minIntervalMs },
+          trigger: v.trigger,
+          triggerKeywords: String(v.triggerKeywords || '')
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          randomProbability: v.randomProbability,
         },
       };
       await api.put(`/api/connections/${detail.connectionId}`, payload);
@@ -273,9 +314,20 @@ export default function ConnectionsPage() {
         open={!!detail}
         onClose={() => setDetail(null)}
         extra={
-          <Button type="primary" onClick={saveDetail}>
-            保存
-          </Button>
+          <Space>
+            <Button
+              onClick={() => {
+                if (!detail) return;
+                setCopyTarget(detail);
+                copyForm.setFieldsValue({ name: `${detail.name} 副本` });
+              }}
+            >
+              复制连接
+            </Button>
+            <Button type="primary" onClick={saveDetail}>
+              保存
+            </Button>
+          </Space>
         }
       >
         {detail && (
@@ -322,6 +374,22 @@ export default function ConnectionsPage() {
             )}
 
             <Divider>聊天配置</Divider>
+            <Form.Item name="trigger" label="触发规则">
+              <Select
+                options={[
+                  { value: 'at', label: '仅 @ 回复（默认）' },
+                  { value: 'keyword', label: '关键词触发（命中即回复，@ 也回复）' },
+                  { value: 'random', label: '概率闲聊（按概率主动插话）' },
+                  { value: 'silent', label: '静默（不回复）' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item name="triggerKeywords" label="触发关键词（每行一个，仅关键词模式生效）">
+              <Input.TextArea rows={3} placeholder={'例如：\n机器人\n小助手'} />
+            </Form.Item>
+            <Form.Item name="randomProbability" label="闲聊概率（0~1，仅概率模式生效）">
+              <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
+            </Form.Item>
             <Form.Item name="mode" label="名单模式">
               <Select
                 options={[
@@ -372,6 +440,17 @@ export default function ConnectionsPage() {
                 </Form.Item>
               </Col>
             </Row>
+
+            <Divider>LLM 覆盖（可选，留空则使用全局配置）</Divider>
+            <Form.Item name="llmBaseUrl" label="Base URL">
+              <Input placeholder="https://api.deepseek.com/v1" />
+            </Form.Item>
+            <Form.Item name="llmApiKey" label="API Key">
+              <Input.Password placeholder="留空使用全局 Key" />
+            </Form.Item>
+            <Form.Item name="llmModel" label="模型">
+              <Input placeholder="deepseek-chat" />
+            </Form.Item>
           </Form>
         )}
       </Drawer>
@@ -386,6 +465,23 @@ export default function ConnectionsPage() {
         <p>
           使用「登录 QQ 号」方式接入属于第三方协议，存在账号被限制或封禁的风险，请确认已知晓并自行承担。
         </p>
+      </Modal>
+
+      <Modal
+        title="复制连接"
+        open={!!copyTarget}
+        onOk={doCopy}
+        onCancel={() => setCopyTarget(null)}
+        okText="复制"
+      >
+        <Form form={copyForm} layout="vertical">
+          <Form.Item name="name" label="新连接名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Input />
+          </Form.Item>
+          <p style={{ color: '#8c8c8c', margin: 0 }}>
+            将复制源连接的凭据、人格、名单与流量控制配置（不含运行状态）。
+          </p>
+        </Form>
       </Modal>
     </div>
   );

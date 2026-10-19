@@ -255,6 +255,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     return ok(d.stats.topObjects(q.connectionId, Number(q.limit || 10)));
   });
   app.get('/api/stats/cost', async (req) => ok(d.stats.cost((req.query as Q).connectionId)));
+  app.get('/api/stats/per-connection', async () => ok(d.stats.perConnection()));
 
   // ---------------- history ----------------
   app.get('/api/history/sessions', async (req) => ok(d.history.sessions((req.query as Q).connectionId)));
@@ -302,6 +303,15 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
   app.get('/api/update/check', async () => {
     const info = await d.update.check();
     return ok({ current: d.update.currentVersion(), latest: info });
+  });
+
+  app.post('/api/update/download', async (_req, reply) => {
+    try {
+      return ok(await d.update.download());
+    } catch (e) {
+      reply.code(400);
+      return fail(400, (e as Error).message);
+    }
   });
 }
 

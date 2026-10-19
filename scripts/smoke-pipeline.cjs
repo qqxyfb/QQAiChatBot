@@ -74,6 +74,44 @@ async function main() {
   console.log('5) 未@消息（应无新回复）reply 仍为 =', replied);
 
   console.log('6) 事件类型 =', [...new Set(events)].join(', '));
+
+  // 7) 触发规则（P1）
+  const { TriggerDecision } = require('../dist/pipeline/steps');
+  const chatBase = {
+    mode: 'blacklist',
+    groupList: [],
+    userList: [],
+    contextMaxMessages: 12,
+    contextTtlMinutes: 5,
+    dailyTokenBudget: 50000,
+    maxInputLen: 2000,
+    floodThreshold: 10,
+    rateLimit: { maxPerMinute: 20, minIntervalMs: 0 },
+    budgetAlertPct: 80,
+    trigger: 'at',
+  };
+  const noAt = { ...base, content: '今天天气不错', atBot: false };
+  const at = { ...noAt, atBot: true };
+  console.log('7) 触发规则：');
+  console.log('   at + 未@ =', TriggerDecision.should(noAt, { ...chatBase, trigger: 'at' }), '(期望 false)');
+  console.log('   at + @   =', TriggerDecision.should(at, { ...chatBase, trigger: 'at' }), '(期望 true)');
+  console.log(
+    '   keyword 命中 =',
+    TriggerDecision.should(noAt, { ...chatBase, trigger: 'keyword', triggerKeywords: ['天气'] }),
+    '(期望 true)'
+  );
+  console.log(
+    '   keyword 未命中 =',
+    TriggerDecision.should({ ...noAt, content: '随便聊聊' }, { ...chatBase, trigger: 'keyword', triggerKeywords: ['天气'] }),
+    '(期望 false)'
+  );
+  console.log('   silent =', TriggerDecision.should(at, { ...chatBase, trigger: 'silent' }), '(期望 false)');
+  console.log(
+    '   random p=1 =',
+    TriggerDecision.should(noAt, { ...chatBase, trigger: 'random', randomProbability: 1 }),
+    '(期望 true)'
+  );
+
   db.close();
 }
 

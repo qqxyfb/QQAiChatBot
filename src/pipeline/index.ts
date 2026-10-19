@@ -40,8 +40,8 @@ export class Pipeline {
     const fromHash = shortHash(m.fromId);
     const groupHash = shortHash(m.groupId);
 
-    // ① 触发决策（P0 固定仅 @ 回复）
-    if (!TriggerDecision.should(m, d.chat.trigger)) return;
+    // ① 触发决策（仅@ / 关键词 / 概率 / 静默）
+    if (!TriggerDecision.should(m, d.chat)) return;
 
     // ② 白 / 黑名单
     if (!AccessControl.allow(m, d.chat)) return;

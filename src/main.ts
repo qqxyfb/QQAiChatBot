@@ -124,7 +124,7 @@ async function main(): Promise<void> {
   // 6) 其余服务
   const statsService = new StatsService(db, configService);
   const historyService = new HistoryService(db, repos.message);
-  const updateService = new UpdateService(configService);
+  const updateService = new UpdateService(configService, dataDir);
 
   // 7) HTTP 服务
   const app = await buildApp(

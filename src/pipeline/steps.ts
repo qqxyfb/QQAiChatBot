@@ -1,13 +1,22 @@
-import type { ChatConfig, NormalizedMessage, TriggerMode } from '../types';
+import type { ChatConfig, NormalizedMessage } from '../types';
 import type { CachedBanwords } from '../db/repos';
 
 export const FALLBACK_REPLY = '（嗯…我现在有点忙，稍后再聊）';
 
-/** 触发决策：P0 固定「仅 @ 回复」；keyword/random 为 P1 占位 */
+/** 触发决策：仅 @ / 关键词 / 概率闲聊 / 静默 */
 export class TriggerDecision {
-  static should(m: NormalizedMessage, mode: TriggerMode): boolean {
+  static should(m: NormalizedMessage, chat: ChatConfig): boolean {
+    const mode = chat.trigger ?? 'at';
     if (mode === 'silent') return false;
-    if (mode === 'keyword' || mode === 'random') return m.atBot; // [P1]
+    if (mode === 'keyword') {
+      const keywords = chat.triggerKeywords ?? [];
+      if (keywords.some((k) => k && m.content.includes(k))) return true;
+      return m.atBot; // 被 @ 时仍回复
+    }
+    if (mode === 'random') {
+      const p = chat.randomProbability ?? 0;
+      return m.atBot || Math.random() < p;
+    }
     return m.atBot;
   }
 }

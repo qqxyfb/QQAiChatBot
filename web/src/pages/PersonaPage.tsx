@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Input, Modal, Popconfirm, Space, Table, Tag, message } from 'antd';
+import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from 'antd';
 import { api } from '../api/client';
 
 interface PersonaItem {
   id: string;
   name: string;
+  profile?: string;
   tags?: string[];
+  bannedWords?: string[];
   builtin: boolean;
   referencedBy: string[];
   profilePrompt: string;
@@ -19,6 +21,45 @@ export default function PersonaPage() {
   const [genText, setGenText] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpText, setHelpText] = useState('');
+  const [editing, setEditing] = useState<PersonaItem | null>(null);
+  const [editForm] = Form.useForm();
+
+  function openEdit(r: PersonaItem) {
+    setEditing(r);
+    editForm.setFieldsValue({
+      name: r.name,
+      profile: r.profile,
+      profilePrompt: r.profilePrompt,
+      tags: (r.tags ?? []).join(', '),
+      bannedWords: (r.bannedWords ?? []).join('\n'),
+    });
+  }
+
+  async function doEdit() {
+    if (!editing) return;
+    try {
+      const v = await editForm.validateFields();
+      await api.put(`/api/persona/${editing.id}`, {
+        name: v.name,
+        profile: v.profile,
+        profilePrompt: v.profilePrompt,
+        tags: String(v.tags || '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        bannedWords: String(v.bannedWords || '')
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
+      message.success('已保存');
+      setEditing(null);
+      await load();
+    } catch (e) {
+      if ((e as { errorFields?: unknown }).errorFields) return;
+      message.error((e as Error).message);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -119,6 +160,9 @@ export default function PersonaPage() {
                 >
                   查看 / 复制
                 </Button>
+                <Button type="link" onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
                 <Popconfirm title="确认删除该人格？" onConfirm={() => remove(r.id)}>
                   <Button type="link" danger disabled={r.builtin}>
                     删除
@@ -162,6 +206,45 @@ export default function PersonaPage() {
 
       <Modal title="人格格式帮助" open={helpOpen} onCancel={() => setHelpOpen(false)} footer={null} width={820}>
         <pre style={{ whiteSpace: 'pre-wrap', maxHeight: '60vh', overflow: 'auto' }}>{helpText}</pre>
+      </Modal>
+
+      <Modal
+        title={`编辑人格 · ${editing?.name ?? ''}`}
+        open={!!editing}
+        onOk={doEdit}
+        onCancel={() => setEditing(null)}
+        width={760}
+        okText="保存"
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="profile" label="人格画像">
+            <Input.TextArea rows={3} />
+          </Form.Item>
+          <Form.Item
+            name="profilePrompt"
+            label="系统提示词（必须包含 {user_message}）"
+            rules={[
+              { required: true, message: '请输入系统提示词' },
+              {
+                validator: (_, v: string) =>
+                  v && v.includes('{user_message}')
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('必须包含 {user_message} 占位符')),
+              },
+            ]}
+          >
+            <Input.TextArea rows={7} />
+          </Form.Item>
+          <Form.Item name="tags" label="标签（英文逗号分隔）">
+            <Input placeholder="温柔, 句短, 日常向" />
+          </Form.Item>
+          <Form.Item name="bannedWords" label="安全红线词（每行一个）">
+            <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Layout, Menu, Select, Space, Typography } from 'antd';
+import { Alert, Button, Layout, Menu, Select, Space, Typography, message } from 'antd';
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from './store';
 import { api } from './api/client';
@@ -98,6 +98,23 @@ function Shell() {
               style={{ marginBottom: 16 }}
               message={`发现新版本 ${updateInfo.latest.version}（当前 ${updateInfo.current}）`}
               description={(updateInfo.latest.changelog || '').slice(0, 200)}
+              action={
+                <Button
+                  size="small"
+                  onClick={async () => {
+                    try {
+                      const r = await api.post<{ path: string; version: string; verified: boolean }>(
+                        '/api/update/download'
+                      );
+                      message.success(`已下载到 ${r.path}${r.verified ? '（SHA256 校验通过）' : ''}`);
+                    } catch (e) {
+                      message.error((e as Error).message);
+                    }
+                  }}
+                >
+                  下载更新
+                </Button>
+              }
             />
           )}
           <Routes>

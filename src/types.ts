@@ -87,7 +87,9 @@ export interface ChatConfig {
   floodThreshold: number;
   rateLimit: RateLimitConfig;
   budgetAlertPct: number;
-  trigger: TriggerMode; // [P1]，P0 固定 'at'
+  trigger: TriggerMode;
+  triggerKeywords?: string[]; // [P1] 关键词触发
+  randomProbability?: number; // [P1] 概率闲聊 0~1
 }
 
 export interface ConnectionConfig {

@@ -1,14 +1,15 @@
-import WebSocket from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import type { Connector } from './types';
 import type { ConnectionConfig, ConnectorStatus, NormalizedMessage, ReplyPayload } from '../types';
 import { SeenMessages } from './seen';
 
 const WS_OPEN = 1;
 
-/** 登录 QQ 号连接器：OneBot v11 正向 WebSocket（对接 NapCat） */
+/** 登录 QQ 号连接器：OneBot v11 正向 / 反向 WebSocket（对接 NapCat） */
 export class AccountLoginConnector implements Connector {
   readonly type = 'account' as const;
   private ws: WebSocket | null = null;
+  private wss: WebSocketServer | null = null;
   private statusVal: ConnectorStatus = 'disconnected';
   private msgHandler: ((m: NormalizedMessage) => void) | null = null;
   private statusHandler: ((s: ConnectorStatus) => void) | null = null;
@@ -32,14 +33,19 @@ export class AccountLoginConnector implements Connector {
   }
 
   async connect(cfg: ConnectionConfig): Promise<void> {
-    const host = cfg.account?.host?.trim();
     const port = cfg.account?.port;
-    if (!host || !port) throw new Error('缺少 OneBot 地址 / 端口');
-    if (cfg.account?.wsMode === 'reverse') {
-      throw new Error('反向 WS 模式暂未实现，请使用正向 WS（连接 NapCat）');
-    }
+    if (!port) throw new Error('缺少 OneBot 端口');
     this.cfg = cfg;
     this.manualClose = false;
+
+    // 反向 WS：本地监听，等待 NapCat 主动连接
+    if (cfg.account?.wsMode === 'reverse') {
+      await this.startReverse(port, cfg.account?.accessToken);
+      return;
+    }
+
+    const host = cfg.account?.host?.trim();
+    if (!host) throw new Error('缺少 OneBot 地址');
     this.setStatus('connecting');
 
     await new Promise<void>((resolve, reject) => {
@@ -86,6 +92,55 @@ export class AccountLoginConnector implements Connector {
     });
   }
 
+  private startReverse(port: number, token?: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.setStatus('connecting');
+      const wss = new WebSocketServer({ port, host: '0.0.0.0' });
+      this.wss = wss;
+      let settled = false;
+
+      wss.on('listening', () => {
+        this.setStatus('connected');
+        if (!settled) {
+          settled = true;
+          resolve();
+        }
+      });
+
+      wss.on('error', (e) => {
+        this.setStatus('error');
+        if (!settled) {
+          settled = true;
+          reject(e as Error);
+        }
+      });
+
+      wss.on('connection', (ws, req) => {
+        if (token) {
+          const auth = String(req.headers.authorization || '');
+          if (auth !== `Bearer ${token}`) {
+            ws.close();
+            return;
+          }
+        }
+        this.ws = ws;
+        this.setStatus('connected');
+        ws.on('message', (raw) => {
+          try {
+            this.handleEvent(JSON.parse(raw.toString()));
+          } catch {
+            /* ignore */
+          }
+        });
+        ws.on('close', () => {
+          this.ws = null;
+          this.setStatus('disconnected');
+        });
+        ws.on('error', () => undefined);
+      });
+    });
+  }
+
   private handleEvent(m: Record<string, unknown>): void {
     if (m?.post_type !== 'message' || !this.cfg) return;
     const id = String(m.message_id ?? '');
@@ -122,6 +177,14 @@ export class AccountLoginConnector implements Connector {
         /* ignore */
       }
       this.ws = null;
+    }
+    if (this.wss) {
+      try {
+        this.wss.close();
+      } catch {
+        /* ignore */
+      }
+      this.wss = null;
     }
     this.setStatus('disconnected');
   }
