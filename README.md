@@ -32,6 +32,22 @@ npm start              # node --experimental-sqlite dist/main.js
 
 浏览器访问 `http://127.0.0.1:8700`。
 
+### 打包（可选，需额外安装 Electron 依赖）
+
+```bash
+npm i -D electron electron-builder
+npm run pack          # 产出 NSIS 安装版 + portable 到 release/
+```
+
+> Electron 二进制较大（约 100MB），默认未列入依赖，避免仅运行/开发时下载过久。
+
+## 冒烟验证
+
+```bash
+node scripts/smoke-pipeline.cjs   # 上下文/安全过滤/LLM 演示/打点
+curl http://127.0.0.1:8700/api/health
+```
+
 ## 目录结构
 
 ```
@@ -59,3 +75,4 @@ data/            运行时数据（gitignore）
 ## P1（二期）
 
 聊天记录下钻、分连接对比、触发规则（关键词/概率）、LLM 覆盖、人格在线编辑、自动下载升级、OneBot 反向 WS。
+
