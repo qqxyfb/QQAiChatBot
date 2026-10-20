@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Divider, Form, Input, InputNumber, Select, Space, Switch, Table, message } from 'antd';
+import { Button, Card, Divider, Form, Input, InputNumber, Select, Space, Switch, Table, message, theme } from 'antd';
 import { api } from '../api/client';
 import type { GlobalConfig } from '../types';
 
 export default function ConfigPage() {
   const [form] = Form.useForm();
   const [testResult, setTestResult] = useState('');
+  const { token } = theme.useToken();
 
   useEffect(() => {
     void load();
@@ -32,9 +33,10 @@ export default function ConfigPage() {
       }
       const payload = { ...v, pricing };
       delete (payload as { pricingText?: string }).pricingText;
-      await api.put('/api/config', payload);
+      const saved = await api.put<GlobalConfig>('/api/config', payload);
       message.success('已保存');
-      await load();
+      // 用服务端返回值回填，保证界面与落盘一致（不再出现 *** 占位）
+      form.setFieldsValue({ ...saved, pricingText: JSON.stringify(saved.pricing ?? {}, null, 2) });
     } catch (e) {
       if ((e as { errorFields?: unknown }).errorFields) return;
       message.error((e as Error).message);
@@ -72,8 +74,8 @@ export default function ConfigPage() {
         <Form.Item name={['llm', 'baseUrl']} label="Base URL" rules={[{ required: true }]}>
           <Input placeholder="https://api.deepseek.com/v1" />
         </Form.Item>
-        <Form.Item name={['llm', 'apiKey']} label="API Key">
-          <Input.Password placeholder="已保存则显示 ***" />
+        <Form.Item name={['llm', 'apiKey']} label="API Key" extra="本地回显真实值，点右侧图标可切换明文/密文">
+          <Input.Password visibilityToggle placeholder="sk-..." />
         </Form.Item>
         <Form.Item name={['llm', 'model']} label="模型" rules={[{ required: true }]}>
           <Input placeholder="deepseek-chat" />
@@ -86,7 +88,7 @@ export default function ConfigPage() {
             <InputNumber min={1} max={8192} />
           </Form.Item>
         </Space>
-        {testResult && <div style={{ marginBottom: 12, color: '#8c8c8c' }}>{testResult}</div>}
+        {testResult && <div style={{ marginBottom: 12, color: token.colorTextSecondary }}>{testResult}</div>}
 
         <Divider orientation="left">存储</Divider>
         <Form.Item name={['storage', 'dataDir']} label="数据目录（留空使用默认）">
@@ -110,7 +112,7 @@ export default function ConfigPage() {
             <Switch />
           </Form.Item>
           <Form.Item name={['server', 'accessToken']} label="访问令牌（外网必填，≥8 位）">
-            <Input.Password placeholder="已保存则显示 ***" />
+            <Input.Password visibilityToggle placeholder="开启外网访问时必填" />
           </Form.Item>
         </Space>
 

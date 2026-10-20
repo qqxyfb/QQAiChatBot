@@ -16,12 +16,14 @@ import {
   Switch,
   Tag,
   message,
+  theme,
 } from 'antd';
 import { api } from '../api/client';
 import { useAppStore, type ConnectionItem } from '../store';
 
 export default function ConnectionsPage() {
   const { connections, loadConnections } = useAppStore();
+  const { token } = theme.useToken();
   const [createOpen, setCreateOpen] = useState(false);
   const [createForm] = Form.useForm();
   const [detail, setDetail] = useState<ConnectionItem | null>(null);
@@ -72,8 +74,7 @@ export default function ConnectionsPage() {
   }
 
   function openDetail(c: ConnectionItem) {
-    setDetail(c);
-    const chat = (c.chat ?? {}) as Record<string, unknown>;
+    setDetail(c);    const chat = (c.chat ?? {}) as Record<string, unknown>;
     detailForm.setFieldsValue({
       name: c.name,
       personaId: c.personaId,
@@ -156,12 +157,35 @@ export default function ConnectionsPage() {
       };
       await api.put(`/api/connections/${detail.connectionId}`, payload);
       message.success('已保存');
-      setDetail(null);
+      forceClose();
       await loadConnections();
     } catch (e) {
       if ((e as { errorFields?: unknown }).errorFields) return;
       message.error((e as Error).message);
     }
+  }
+
+  /** 直接关闭并丢弃编辑态（保存成功后 / 用户确认放弃后调用） */
+  function forceClose(): void {
+    detailForm.resetFields();
+    setDetail(null);
+  }
+
+  /** 关闭抽屉前做脏检查，避免误触遮罩/ESC 丢掉未保存的编辑 */
+  function requestClose(): void {
+    if (!detail) return;
+    if (!detailForm.isFieldsTouched()) {
+      forceClose();
+      return;
+    }
+    Modal.confirm({
+      title: '放弃未保存的修改？',
+      content: '关闭后本次编辑的内容不会保存。',
+      okText: '放弃修改',
+      cancelText: '继续编辑',
+      okButtonProps: { danger: true },
+      onOk: forceClose,
+    });
   }
 
   async function toggle(c: ConnectionItem) {
@@ -312,7 +336,9 @@ export default function ConnectionsPage() {
         title={detail ? `连接配置 · ${detail.name}` : ''}
         width={680}
         open={!!detail}
-        onClose={() => setDetail(null)}
+        onClose={requestClose}
+        maskClosable={false}
+        keyboard={false}
         extra={
           <Space>
             <Button
@@ -478,7 +504,7 @@ export default function ConnectionsPage() {
           <Form.Item name="name" label="新连接名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input />
           </Form.Item>
-          <p style={{ color: '#8c8c8c', margin: 0 }}>
+          <p style={{ color: token.colorTextSecondary, margin: 0 }}>
             将复制源连接的凭据、人格、名单与流量控制配置（不含运行状态）。
           </p>
         </Form>

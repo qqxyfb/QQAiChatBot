@@ -1,4 +1,4 @@
-import type { LlmConfig, MetricEvent } from '../types';
+import type { LlmConfig, LogLevel, MetricEvent } from '../types';
 
 export interface LlmResult {
   ok: boolean;
@@ -19,6 +19,15 @@ export class LlmGateway {
     private sessionId: number | null,
     private emit: (e: MetricEvent) => void
   ) {}
+
+  /** 供链路日志展示当前模型名 */
+  get model(): string {
+    return this.cfg.model;
+  }
+
+  private log(level: LogLevel, msg: string, meta?: Record<string, unknown>): void {
+    this.emit({ kind: 'log', connectionId: this.connectionId, level, source: 'llm', msg, meta });
+  }
 
   private normalizeUrl(): string {
     let base = (this.cfg.baseUrl || '').trim();
@@ -93,7 +102,10 @@ export class LlmGateway {
         lastStatus = -1;
         lastError = (e as Error).message;
       }
-      if (attempt < 2) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      if (attempt < 2) {
+        this.log('WARN', `LLM 请求失败（第 ${attempt + 1} 次）：${lastError}，${800 * (attempt + 1)}ms 后重试`);
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      }
     }
 
     result.ok = false;
@@ -117,5 +129,12 @@ export class LlmGateway {
       retryCnt: Math.max(0, r.attempts - 1),
       error: r.error,
     });
+    // 失败信息同步进运行日志：原来只落 llm_call 表，用户在前端看不到任何线索
+    if (status !== 'ok') {
+      this.log(
+        'ERROR',
+        `LLM 调用失败（model=${this.cfg.model}，${r.attempts} 次尝试，${r.elapsedMs}ms）：${r.error ?? status}`
+      );
+    }
   }
 }

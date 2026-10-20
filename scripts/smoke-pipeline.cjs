@@ -49,10 +49,10 @@ const pipeline = new Pipeline({
       { baseUrl: '', apiKey: '', model: 'stub', temperature: 0.8, maxTokens: 64 },
       'smoke',
       null,
-      (e) => events.push(e.kind)
+      (e) => events.push(e)
     ),
   sessionId: () => null,
-  emit: (e) => events.push(e.kind),
+  emit: (e) => events.push(e),
 });
 
 async function main() {
@@ -73,7 +73,24 @@ async function main() {
   await pipeline.handle({ ...base, messageId: 'm4', content: '未@消息', atBot: false });
   console.log('5) 未@消息（应无新回复）reply 仍为 =', replied);
 
-  console.log('6) 事件类型 =', [...new Set(events)].join(', '));
+  console.log('6) 事件类型 =', [...new Set(events.map((e) => e.kind))].join(', '));
+
+  // 6.1) 链路日志：未@ 被拦也必须有可读原因，不能静默
+  const logs = events.filter((e) => e.kind === 'log');
+  const silentReasons = logs.filter((e) => e.msg.includes('触发未通过'));
+  console.log('6.1) 运行日志条数 =', logs.length, '，其中「触发未通过」=', silentReasons.length, '(期望 ≥1)');
+
+  // 6.2) 私聊（c2c + at 模式）必须回复
+  replied = '';
+  await pipeline.handle({
+    connectionId: 'smoke',
+    channel: 'c2c',
+    fromId: 'u2',
+    messageId: 'm5',
+    content: '私聊你好',
+    atBot: false,
+  });
+  console.log('6.2) 私聊回复 =', replied ? '有回复' : '无回复', '(期望 有回复)');
 
   // 7) 触发规则（P1）
   const { TriggerDecision } = require('../dist/pipeline/steps');

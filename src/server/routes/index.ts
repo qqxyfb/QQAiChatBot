@@ -97,10 +97,13 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
   app.post('/api/connections/:id/stop', async (req) => ok(await d.connection.stop(qid(req))));
   app.post('/api/connections/:id/test', async (req) => ok(d.connection.test(qid(req))));
   app.get('/api/connections/:id/status', async (req) => ok(d.connection.status(qid(req))));
-  app.get('/api/connections/:id/precheck', async (req) => ok(d.connection.precheck(qid(req))));
+  app.get('/api/connections/:id/precheck', async (req) => ok(await d.connection.precheckAsync(qid(req))));
 
   // ---------------- config ----------------
-  app.get('/api/config', async () => ok(maskConfig(d.config.load())));
+  // 本地桌面应用（默认只监听 127.0.0.1）不做接口级脱敏：回显真实值。
+  // 否则前端把 *** 当真实值回填，二次保存时会被当成新密钥加密/校验不一致而报错。
+  // 脱敏只保留在「导出」路径上。
+  app.get('/api/config', async () => ok(d.config.load()));
 
   app.put('/api/config', async (req, reply) => {
     try {
@@ -111,7 +114,7 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
         return fail(400, errors.join('；'));
       }
       d.config.save(cfg);
-      return ok(maskConfig(d.config.load()));
+      return ok(d.config.load());
     } catch (e) {
       reply.code(400);
       return fail(400, (e as Error).message);
@@ -123,21 +126,43 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
     return ok(await d.config.testLlm({ ...body, temperature: body.temperature ?? 0.8, maxTokens: body.maxTokens ?? 512 }));
   });
 
-  app.get('/api/config/export', async (_req, reply) => {
+  app.get('/api/config/export', async (req, reply) => {
+    const q = req.query as Q;
+    const reveal = q.reveal === '1' || q.reveal === 'true';
+    const cfg = d.config.load();
     reply.type('application/json').header('Content-Disposition', 'attachment; filename="qqaichatbot-config.json"');
-    return JSON.stringify(maskConfig(d.config.load()), null, 2);
+    return JSON.stringify(reveal ? cfg : maskConfig(cfg), null, 2);
   });
 
   app.post('/api/config/import', async (req, reply) => {
     try {
       const cfg = req.body as GlobalConfig;
+      // 导入的是脱敏导出文件时，密钥字段为 ***：置空并要求重填，
+      // 绝不能静默沿用本机旧 Key（否则会出现「导入了别人的配置却用自己的 Key」）
+      const masked: string[] = [];
+      if (cfg.llm?.apiKey === '***') {
+        cfg.llm.apiKey = '';
+        masked.push('LLM API Key');
+      }
+      if (cfg.server?.accessToken === '***') {
+        cfg.server.accessToken = '';
+        masked.push('访问令牌');
+      }
+      if (cfg.update?.pat === '***') {
+        cfg.update.pat = '';
+        masked.push('GitHub PAT');
+      }
       const errors = d.config.validate(cfg);
       if (errors.length) {
         reply.code(400);
         return fail(400, errors.join('；'));
       }
       d.config.save(cfg);
-      return ok(maskConfig(d.config.load()));
+      return {
+        code: 0,
+        data: d.config.load(),
+        message: masked.length ? `已导入，但 ${masked.join(' / ')} 为脱敏占位，请重新填写后保存` : 'ok',
+      };
     } catch (e) {
       reply.code(400);
       return fail(400, (e as Error).message);

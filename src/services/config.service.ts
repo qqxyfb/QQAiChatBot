@@ -5,6 +5,20 @@ import type { SnapshotRepo } from '../db/repos';
 import type { SecretStore } from '../secret/secret-store';
 import { ensureDir } from '../config';
 import { redact } from '../utils/hash';
+import { describeError, httpFetch } from './http';
+
+/** 把用户填的 Base URL 归一成「不带 /chat/completions 的根」 */
+export function normalizeLlmBase(baseUrl: string): string {
+  let base = (baseUrl || '').trim();
+  if (!base) return '';
+  if (base.toLowerCase().endsWith('/chat/completions')) base = base.slice(0, -'/chat/completions'.length);
+  return base.replace(/\/+$/, '');
+}
+
+export interface LlmProbe {
+  status: 'pass' | 'fail' | 'skip';
+  message: string;
+}
 
 export class ConfigService {
   private cache: GlobalConfig | null = null;
@@ -61,9 +75,13 @@ export class ConfigService {
   }
 
   save(cfg: GlobalConfig): void {
-    // 前端回显的 *** 表示「保持不变」，用旧值填充，避免覆盖真实密钥
+    // 兜底：接口已改为回显真实值，正常路径不会出现 ***。
+    // 若仍命中，说明存在旧调用方或直接导入的脱敏文件，这里保持旧值并留痕。
     const cur = this.load();
-    if (cfg.llm.apiKey === '***') cfg.llm.apiKey = cur.llm.apiKey;
+    if (cfg.llm.apiKey === '***') {
+      cfg.llm.apiKey = cur.llm.apiKey;
+      console.warn('[config] 收到脱敏占位 ***，已沿用原值；请检查调用方');
+    }
     if (cfg.server.accessToken === '***') cfg.server.accessToken = cur.server.accessToken;
     if (cfg.update.pat === '***') cfg.update.pat = cur.update.pat;
 
@@ -81,7 +99,12 @@ export class ConfigService {
     ensureDir(path.dirname(this.configFile));
     fs.writeFileSync(this.configFile, JSON.stringify(toStore, null, 2), 'utf8');
     this.cache = cfg;
-    this.snapshotRepo.insertConfig('global', JSON.stringify(redact(cfg)), 'save');
+    // 配置快照只是审计用，写失败（磁盘只读/库被锁）不应该让「保存」整体失败
+    try {
+      this.snapshotRepo.insertConfig('global', JSON.stringify(redact(cfg)), 'save');
+    } catch (e) {
+      console.warn(`[config] 配置快照写入失败（已忽略）：${(e as Error).message}`);
+    }
   }
 
   validate(cfg: GlobalConfig): string[] {
@@ -105,9 +128,8 @@ export class ConfigService {
   async testLlm(cfg: LlmConfig): Promise<{ ok: boolean; status?: number; latencyMs: number; message: string }> {
     const t0 = Date.now();
     if (!cfg.apiKey) return { ok: false, latencyMs: 0, message: '未配置 API Key' };
-    let base = (cfg.baseUrl || '').trim();
-    if (base.toLowerCase().endsWith('/chat/completions')) base = base.slice(0, -'/chat/completions'.length);
-    const url = base.replace(/\/+$/, '') + '/chat/completions';
+    const base = normalizeLlmBase(cfg.baseUrl);
+    const url = `${base}/chat/completions`;
     try {
       const resp = await fetch(url, {
         method: 'POST',
@@ -127,6 +149,49 @@ export class ConfigService {
       };
     } catch (e) {
       return { ok: false, latencyMs: Date.now() - t0, message: (e as Error).message };
+    }
+  }
+
+  /**
+   * 启动前置探测：LLM 端点连通性 + 模型是否真实存在。
+   * 目的：把「running 但完全静默」提前变成「启动失败 + 明确原因」。
+   * 未配置 API Key 时跳过（演示模式）；代理不支持 /models 时降级为仅探通。
+   */
+  async probeLlm(cfg: LlmConfig): Promise<LlmProbe> {
+    const base = normalizeLlmBase(cfg.baseUrl);
+    if (!base) return { status: 'fail', message: 'LLM Base URL 为空' };
+    if (!cfg.apiKey) return { status: 'skip', message: '未配置 LLM API Key，将使用演示模式' };
+
+    try {
+      const resp = await httpFetch(`${base}/models`, {
+        headers: { Authorization: `Bearer ${cfg.apiKey}` },
+        timeoutMs: 8000,
+      });
+      if (resp.status === 404 || resp.status === 405) {
+        return { status: 'pass', message: `LLM 端点可达（${base}，不支持 /models，跳过模型校验）` };
+      }
+      if (resp.status === 401 || resp.status === 403) {
+        return { status: 'fail', message: `LLM 鉴权失败：HTTP ${resp.status}，请检查 API Key` };
+      }
+      if (!resp.ok) return { status: 'fail', message: `LLM 请求失败：HTTP ${resp.status}` };
+
+      let models: string[] = [];
+      try {
+        const j = (await resp.json()) as { data?: Array<{ id?: string }> };
+        models = (j.data ?? []).map((m) => String(m.id ?? '')).filter(Boolean);
+      } catch {
+        /* 非 JSON 响应视为端点可达 */
+      }
+      if (models.length && cfg.model && !models.includes(cfg.model)) {
+        const shown = models.slice(0, 8).join(', ');
+        return {
+          status: 'fail',
+          message: `模型 ${cfg.model} 不存在，可选：${shown}${models.length > 8 ? ' …' : ''}`,
+        };
+      }
+      return { status: 'pass', message: `LLM 可用（${base}，模型 ${cfg.model}）` };
+    } catch (e) {
+      return { status: 'fail', message: `LLM 不可达：${describeError(e)}` };
     }
   }
 }

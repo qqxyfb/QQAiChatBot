@@ -13,12 +13,14 @@ import { ContextManager } from '../pipeline/context';
 import { RateLimiter, TokenBudget } from '../pipeline/limits';
 import { Pipeline } from '../pipeline';
 import { LlmGateway } from '../llm/gateway';
+import { SerialQueue } from '../utils/serial-queue';
 
 export interface RuntimeDeps {
   personaRepo: PersonaRepo;
   banwordRepo: BanwordRepo;
   tokenBudgetRepo: TokenBudgetRepo;
-  globalLlm: LlmConfig;
+  /** 全局 LLM 配置用读取器而非快照：核心配置改了无需重启即可生效 */
+  getGlobalLlm: () => LlmConfig;
   emit: (e: MetricEvent) => void;
 }
 
@@ -40,6 +42,17 @@ export class ConnectionRuntime {
   status: ConnectionStatus = 'stopped';
   sessionId: number | null = null;
 
+  /** 同会话串行队列：防止并发跑 LLM 导致回复乱序、上下文交错 */
+  private queues = new SerialQueue(5, (key, depth) => {
+    this.deps.emit({
+      kind: 'log',
+      connectionId: this.connectionId,
+      level: 'WARN',
+      source: 'pipeline',
+      msg: `会话 ${key} 已积压 ${depth} 条待处理消息，丢弃新消息`,
+    });
+  });
+
   constructor(config: ConnectionConfig, private deps: RuntimeDeps) {
     this.connectionId = config.connectionId;
     this.config = config;
@@ -54,28 +67,11 @@ export class ConnectionRuntime {
       config.chat.dailyTokenBudget
     );
 
-    this.pipeline = new Pipeline({
-      connectionId: config.connectionId,
-      chat: config.chat,
-      context: this.context,
-      limiter: this.limiter,
-      tokenBudget: this.tokenBudget,
-      sendReply: (r) => this.connector.sendReply(r),
-      getPersona: () => this.resolvePersona(),
-      getBanwords: () => deps.banwordRepo.getCache(),
-      createLlm: () =>
-        new LlmGateway(
-          config.llmOverride ?? deps.globalLlm,
-          config.connectionId,
-          this.sessionId,
-          deps.emit
-        ),
-      sessionId: () => this.sessionId,
-      emit: deps.emit,
-    });
+    this.pipeline = this.createPipeline();
 
     this.connector.onMessage((m) => {
-      void this.pipeline.handle(m);
+      const key = `${m.channel}:${m.groupId ?? m.fromId}`;
+      void this.queues.run(key, () => this.pipeline.handle(m));
     });
     this.connector.onStatus((s) => {
       const event = s === 'connected' ? 'connect' : s === 'disconnected' ? 'disconnect' : s === 'error' ? 'error' : 'heartbeat';
@@ -86,6 +82,29 @@ export class ConnectionRuntime {
         connectorType: config.type,
         detail: s,
       });
+    });
+  }
+
+  private createPipeline(): Pipeline {
+    return new Pipeline({
+      connectionId: this.config.connectionId,
+      chat: this.config.chat,
+      context: this.context,
+      limiter: this.limiter,
+      tokenBudget: this.tokenBudget,
+      sendReply: (r) => this.connector.sendReply(r),
+      getPersona: () => this.resolvePersona(),
+      getBanwords: () => this.deps.banwordRepo.getCache(),
+      // llmOverride / 全局 LLM 都在调用时实时读取，改配置后下一条消息即生效
+      createLlm: () =>
+        new LlmGateway(
+          this.config.llmOverride ?? this.deps.getGlobalLlm(),
+          this.config.connectionId,
+          this.sessionId,
+          this.deps.emit
+        ),
+      sessionId: () => this.sessionId,
+      emit: this.deps.emit,
     });
   }
 
@@ -101,8 +120,32 @@ export class ConnectionRuntime {
     return FALLBACK_PERSONA;
   }
 
-  /** 更新配置（用于运行时热更新，P0 仅重启生效） */
+  /**
+   * 更新配置（运行时热生效）。
+   * chat 相关参数就地刷新（上下文内容、当日 token 计数、限流分桶都保留）；
+   * llmOverride / 全局 LLM 由 createLlm 的闭包实时读取，无需额外处理。
+   */
   updateConfig(config: ConnectionConfig): void {
+    const prev = this.config;
     this.config = config;
+
+    const chatChanged = JSON.stringify(prev.chat) !== JSON.stringify(config.chat);
+    const personaChanged = prev.personaId !== config.personaId;
+    if (!chatChanged && !personaChanged) return;
+
+    if (chatChanged) {
+      this.context.reconfigure(config.chat.contextMaxMessages, config.chat.contextTtlMinutes);
+      this.limiter.updateConfig(config.chat.rateLimit);
+      this.tokenBudget.updateLimit(config.chat.dailyTokenBudget);
+      this.pipeline.setChat(config.chat);
+    }
+
+    this.deps.emit({
+      kind: 'log',
+      connectionId: this.connectionId,
+      level: 'INFO',
+      source: 'server',
+      msg: `配置已热更新（${chatChanged ? '聊天参数' : ''}${personaChanged ? ' 人格绑定' : ''}），无需重启连接`,
+    });
   }
 }

@@ -71,9 +71,13 @@ export interface AccountConfig {
   wsMode: 'forward' | 'reverse';
 }
 
+export type RateLimitScope = 'connection' | 'user';
+
 export interface RateLimitConfig {
   maxPerMinute: number;
   minIntervalMs: number;
+  /** 限流维度：user=按对象分桶（默认），connection=整连接共享 */
+  scope?: RateLimitScope;
 }
 
 export interface ChatConfig {

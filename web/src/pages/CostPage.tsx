@@ -3,6 +3,7 @@ import { Card, Col, Row, Space, Statistic, message } from 'antd';
 import ReactECharts from 'echarts-for-react';
 import { api } from '../api/client';
 import { useAppStore } from '../store';
+import { useChartStyle } from '../theme';
 
 interface CostSummary {
   today: number;
@@ -13,6 +14,7 @@ interface CostSummary {
 
 export default function CostPage() {
   const { activeConnectionId } = useAppStore();
+  const { axis: axisStyle, split: splitStyle, legend: legendStyle, text: textStyle } = useChartStyle();
   const [cost, setCost] = useState<CostSummary>({ today: 0, week: 0, month: 0, monthEstimate: 0 });
   const [hourly, setHourly] = useState<Array<{ hour: string; prompt: number; completion: number }>>([]);
   const [todayTokens, setTodayTokens] = useState(0);
@@ -51,7 +53,7 @@ export default function CostPage() {
         <Col span={6}><Card><Statistic title="今日 Token" value={todayTokens} /></Card></Col>
         <Col span={18}>
           <Card title="费用说明">
-            <p style={{ color: '#aaa', margin: 0 }}>
+            <p style={{ ...textStyle, margin: 0 }}>
               费用 = (输入 Token × 输入单价 + 输出 Token × 输出单价) / 1,000,000。
               单价在「核心配置 → 成本单价」中按模型填写（元 / 百万 token）。未配置单价的模型显示为「未计价」。
             </p>
@@ -65,19 +67,17 @@ export default function CostPage() {
           option={{
             backgroundColor: 'transparent',
             tooltip: { trigger: 'axis' },
-            legend: { data: ['输入 Token', '输出 Token'], textStyle: { color: '#aaa' } },
+            legend: { data: ['输入 Token', '输出 Token'], textStyle: legendStyle },
             grid: { left: 60, right: 30, top: 40, bottom: 30 },
             xAxis: {
               type: 'category',
               data: hourly.map((x) => `${x.hour}:00`),
-              axisLine: { lineStyle: { color: '#555' } },
-              axisLabel: { color: '#aaa' },
+              ...axisStyle,
             },
             yAxis: {
               type: 'value',
-              axisLine: { lineStyle: { color: '#555' } },
-              axisLabel: { color: '#aaa' },
-              splitLine: { lineStyle: { color: '#2a2a2a' } },
+              ...axisStyle,
+              ...splitStyle,
             },
             series: [
               { name: '输入 Token', type: 'bar', stack: 'total', data: hourly.map((x) => x.prompt) },

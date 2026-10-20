@@ -29,13 +29,14 @@ export function loadMigrations(dir: string): Migration[] {
  */
 export function migrate(db: Database, migrations: Migration[], dbFile: string): void {
   const current = db.getUserVersion();
-  if (current > 0 && fs.existsSync(dbFile)) {
+  const pending = migrations.filter((m) => m.version > current).sort((a, b) => a.version - b.version);
+  // 只在真的要升级时备份：否则每次启动都全量拷一份，磁盘很快被 .bak 撑满
+  if (pending.length > 0 && current > 0 && fs.existsSync(dbFile)) {
     const backup = `${dbFile}.bak.${Date.now()}`;
     fs.copyFileSync(dbFile, backup);
     console.log(`[migrate] 已备份旧库 -> ${backup}`);
   }
 
-  const pending = migrations.filter((m) => m.version > current).sort((a, b) => a.version - b.version);
   for (const m of pending) {
     db.exec('BEGIN');
     try {

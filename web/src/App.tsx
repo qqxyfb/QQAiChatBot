@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, Button, Layout, Menu, Modal, Select, Space, Typography, message } from 'antd';
+import { Alert, Button, Layout, Menu, Modal, Segmented, Select, Space, Typography, message, theme } from 'antd';
 import { BrowserRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAppStore } from './store';
 import { api } from './api/client';
+import { useTheme, type ThemeMode } from './theme';
 import ConnectionsPage from './pages/ConnectionsPage';
 import ConfigPage from './pages/ConfigPage';
 import PersonaPage from './pages/PersonaPage';
@@ -49,6 +50,8 @@ function Shell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { connections, activeConnectionId, setActive, loadConnections } = useAppStore();
+  const { mode, resolved, setMode } = useTheme();
+  const { token } = theme.useToken();
   const [updateInfo, setUpdateInfo] = useState<{
     current: string;
     latest: { version: string; changelog: string } | null;
@@ -70,10 +73,23 @@ function Shell() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Layout.Sider width={200} theme="dark">
-        <div style={{ padding: '18px 16px', fontWeight: 600, fontSize: 16 }}>QQ AI ChatBot</div>
+      <Layout.Sider
+        width={200}
+        theme={resolved === 'dark' ? 'dark' : 'light'}
+        style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}
+      >
+        <div
+          style={{
+            padding: '18px 16px',
+            fontWeight: 600,
+            fontSize: 16,
+            color: resolved === 'dark' ? '#ffffff' : token.colorText,
+          }}
+        >
+          QQ AI ChatBot
+        </div>
         <Menu
-          theme="dark"
+          theme={resolved === 'dark' ? 'dark' : 'light'}
           mode="inline"
           selectedKeys={[location.pathname]}
           items={MENU}
@@ -87,7 +103,8 @@ function Shell() {
             alignItems: 'center',
             justifyContent: 'space-between',
             paddingInline: 24,
-            background: '#141414',
+            background: token.colorBgContainer,
+            borderBottom: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
           <Typography.Text strong>多连接管理后台</Typography.Text>
@@ -103,6 +120,16 @@ function Shell() {
                   value: c.connectionId,
                   label: `${c.name}${c.status === 'running' ? ' · 运行中' : ''}`,
                 })),
+              ]}
+            />
+            <Segmented
+              size="small"
+              value={mode}
+              onChange={(v) => setMode(v as ThemeMode)}
+              options={[
+                { value: 'light', label: '浅色' },
+                { value: 'dark', label: '深色' },
+                { value: 'system', label: '跟随系统' },
               ]}
             />
           </Space>

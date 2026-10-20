@@ -84,7 +84,7 @@ async function main(): Promise<void> {
     personaRepo: repos.persona,
     banwordRepo: repos.banword,
     tokenBudgetRepo: repos.tokenBudget,
-    globalLlm: globalCfg.llm,
+    getGlobalLlm: () => configService.load().llm,
     emit,
     loadConfig: (id) => {
       const cfg = connectionService.get(id);

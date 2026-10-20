@@ -3,31 +3,64 @@ import type { CachedBanwords } from '../db/repos';
 
 export const FALLBACK_REPLY = '（嗯…我现在有点忙，稍后再聊）';
 
-/** 触发决策：仅 @ / 关键词 / 概率闲聊 / 静默 */
+/** 判定结果：除布尔值外附带原因，便于日志定位「为什么没回」 */
+export interface Decision {
+  ok: boolean;
+  reason: string;
+}
+
+/**
+ * 触发决策：仅 @ / 关键词 / 概率闲聊 / 静默
+ *
+ * 注意私聊（c2c）没有「@」语义：`at` 模式下 C2C 消息的 atBot 恒为 false，
+ * 若不放行会导致私聊被静默丢弃（历史 bug）。keyword / random 在私聊里语义成立，
+ * 仍按用户配置执行，不额外放行。
+ */
 export class TriggerDecision {
   static should(m: NormalizedMessage, chat: ChatConfig): boolean {
+    return TriggerDecision.evaluate(m, chat).ok;
+  }
+
+  static evaluate(m: NormalizedMessage, chat: ChatConfig): Decision {
     const mode = chat.trigger ?? 'at';
-    if (mode === 'silent') return false;
+    if (mode === 'silent') return { ok: false, reason: '触发未通过：mode=silent（静默模式）' };
+
     if (mode === 'keyword') {
       const keywords = chat.triggerKeywords ?? [];
-      if (keywords.some((k) => k && m.content.includes(k))) return true;
-      return m.atBot; // 被 @ 时仍回复
+      const hit = keywords.find((k) => k && m.content.includes(k));
+      if (hit) return { ok: true, reason: `关键词命中：${hit}` };
+      if (m.atBot) return { ok: true, reason: '被 @' };
+      return { ok: false, reason: '触发未通过：mode=keyword 且未命中关键词、未 @' };
     }
+
     if (mode === 'random') {
+      if (m.atBot) return { ok: true, reason: '被 @' };
       const p = chat.randomProbability ?? 0;
-      return m.atBot || Math.random() < p;
+      if (Math.random() < p) return { ok: true, reason: `概率命中（p=${p}）` };
+      return { ok: false, reason: `触发未通过：mode=random 且未命中概率（p=${p}）` };
     }
-    return m.atBot;
+
+    // mode === 'at'
+    if (m.atBot) return { ok: true, reason: '被 @' };
+    if (m.channel === 'c2c') return { ok: true, reason: '私聊直通（c2c 无 @ 语义）' };
+    return { ok: false, reason: '触发未通过：mode=at 且未 @' };
   }
 }
 
 /** 白 / 黑名单（群 + 对象两级） */
 export class AccessControl {
   static allow(m: NormalizedMessage, chat: ChatConfig): boolean {
+    return AccessControl.evaluate(m, chat).ok;
+  }
+
+  static evaluate(m: NormalizedMessage, chat: ChatConfig): Decision {
     const groups = new Set(chat.groupList ?? []);
     const users = new Set(chat.userList ?? []);
     const hit = Boolean((m.groupId && groups.has(m.groupId)) || users.has(m.fromId));
-    return chat.mode === 'whitelist' ? hit : !hit;
+    if (chat.mode === 'whitelist') {
+      return hit ? { ok: true, reason: '名单通过：白名单命中' } : { ok: false, reason: '名单拦截：不在白名单' };
+    }
+    return hit ? { ok: false, reason: '名单拦截：黑名单命中' } : { ok: true, reason: '名单通过：黑名单未命中' };
   }
 }
 
@@ -41,19 +74,20 @@ export class SafetyFilter {
     text: string,
     global: CachedBanwords,
     persona: string[]
-  ): { text: string; rejected: boolean } {
+  ): { text: string; rejected: boolean; hit?: string } {
     const clean = this.redactPii(text);
-    return { text: clean, rejected: this.hit(clean, global.in, persona) };
+    const hit = this.find(clean, global.in, persona);
+    return { text: clean, rejected: Boolean(hit), hit };
   }
 
   static checkOut(text: string, global: CachedBanwords, persona: string[]): string {
-    return this.hit(text, global.out, persona) ? FALLBACK_REPLY : text;
+    return this.find(text, global.out, persona) ? FALLBACK_REPLY : text;
   }
 
-  private static hit(text: string, globalSet: Set<string>, persona: string[]): boolean {
-    for (const w of persona) if (w && text.includes(w)) return true;
-    for (const w of globalSet) if (w && text.includes(w)) return true;
-    return false;
+  private static find(text: string, globalSet: Set<string>, persona: string[]): string | undefined {
+    for (const w of persona) if (w && text.includes(w)) return w;
+    for (const w of globalSet) if (w && text.includes(w)) return w;
+    return undefined;
   }
 }
 

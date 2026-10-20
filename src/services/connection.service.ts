@@ -187,9 +187,36 @@ export class ConnectionService {
     return { ok: !items.some((i) => i.level === 'block' && i.status === 'fail'), items };
   }
 
-  async start(id: string): Promise<{ ok: boolean; code: number; precheck: PrecheckResult; message: string }> {
+  /**
+   * 异步预检：在同步预检之上补 LLM 连通性与模型探测。
+   * LLM 探不通视为阻塞项 —— 宁可启动失败并给出原因，也不要 running 之后完全静默。
+   */
+  async precheckAsync(id: string): Promise<PrecheckResult> {
     const pre = this.precheck(id);
-    if (!pre.ok) return { ok: false, code: 1001, precheck: pre, message: '预检未通过，存在阻塞项' };
+    const cfg = this.get(id);
+    if (!cfg) throw new Error('连接不存在');
+
+    const llm = cfg.llmOverride ?? this.config.load().llm;
+    const probe = await this.config.probeLlm(llm);
+    const llmItem: PrecheckItem = {
+      key: 'llm',
+      level: probe.status === 'fail' ? 'block' : 'warn',
+      status: probe.status === 'fail' ? 'fail' : 'pass',
+      message: probe.message,
+    };
+    const items = [...pre.items.filter((i) => i.key !== 'llm'), llmItem];
+    return { ok: !items.some((i) => i.level === 'block' && i.status === 'fail'), items };
+  }
+
+  async start(id: string): Promise<{ ok: boolean; code: number; precheck: PrecheckResult; message: string }> {
+    const pre = await this.precheckAsync(id);
+    if (!pre.ok) {
+      const reasons = pre.items
+        .filter((i) => i.level === 'block' && i.status === 'fail')
+        .map((i) => i.message)
+        .join('；');
+      return { ok: false, code: 1001, precheck: pre, message: `预检未通过：${reasons || '存在阻塞项'}` };
+    }
     try {
       await this.manager.start(id);
       return { ok: true, code: 0, precheck: pre, message: '已启动' };

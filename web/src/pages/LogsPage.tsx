@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Input, List, Select, Space, Tag } from 'antd';
+import { Button, Input, List, Select, Space, Tag, theme } from 'antd';
 import { wsUrl } from '../api/client';
 import { useAppStore } from '../store';
 
@@ -14,6 +14,7 @@ interface LogRow {
 
 export default function LogsPage() {
   const { activeConnectionId } = useAppStore();
+  const { token } = theme.useToken();
   const [rows, setRows] = useState<LogRow[]>([]);
   const [paused, setPaused] = useState(false);
   const [level, setLevel] = useState<string | undefined>();
@@ -104,7 +105,7 @@ export default function LogsPage() {
                 {r.level}
               </Tag>
               <Tag>{r.source}</Tag>
-              <span style={{ color: '#8c8c8c' }}>{new Date(r.ts).toLocaleTimeString()}</span>
+              <span style={{ color: token.colorTextSecondary }}>{new Date(r.ts).toLocaleTimeString()}</span>
               <span>{r.msg}</span>
             </Space>
           </List.Item>

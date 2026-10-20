@@ -1,6 +1,7 @@
 import type {
   ChatConfig,
   FinishReason,
+  LogLevel,
   MetricEvent,
   NormalizedMessage,
   Persona,
@@ -29,7 +30,28 @@ export interface PipelineDeps {
 
 /** 核心链路：每连接一个独立实例 */
 export class Pipeline {
-  constructor(private d: PipelineDeps) {}
+  private chat: ChatConfig;
+
+  constructor(private d: PipelineDeps) {
+    this.chat = d.chat;
+  }
+
+  /** 配置热更新：替换聊天配置，无需重建 pipeline（上下文等运行态保留） */
+  setChat(chat: ChatConfig): void {
+    this.chat = chat;
+  }
+
+  /** 链路日志：统一出口，source 固定 pipeline，方便前端按来源筛选 */
+  private log(level: LogLevel, msg: string, meta?: Record<string, unknown>): void {
+    this.d.emit({
+      kind: 'log',
+      connectionId: this.d.connectionId,
+      level,
+      source: 'pipeline',
+      msg,
+      meta,
+    });
+  }
 
   async handle(m: NormalizedMessage): Promise<void> {
     const d = this.d;
@@ -39,21 +61,31 @@ export class Pipeline {
     const personaBanned = persona.bannedWords ?? [];
     const fromHash = shortHash(m.fromId);
     const groupHash = shortHash(m.groupId);
+    const where = m.channel === 'c2c' ? `私聊 from=${fromHash}` : `群 ${groupHash} from=${fromHash}`;
+
+    this.log('INFO', `收到消息（${where}，${m.content.length} 字）`);
 
     // ① 触发决策（仅@ / 关键词 / 概率 / 静默）
-    if (!TriggerDecision.should(m, d.chat)) return;
+    const trigger = TriggerDecision.evaluate(m, this.chat);
+    if (!trigger.ok) return this.log('DEBUG', trigger.reason);
+    this.log('DEBUG', `触发通过：${trigger.reason}`);
 
     // ② 白 / 黑名单
-    if (!AccessControl.allow(m, d.chat)) return;
+    const access = AccessControl.evaluate(m, this.chat);
+    if (!access.ok) return this.log('DEBUG', access.reason);
+    this.log('DEBUG', `名单通过：${access.reason}`);
 
-    // 频率限制
-    if (!d.limiter.allow()) {
-      d.emit({ kind: 'abuse', connectionId: d.connectionId, fromHash, reason: '频率限制', abuseKind: 'rate' });
+    // 频率限制（按对象分桶）
+    const rate = d.limiter.evaluate(fromHash);
+    if (!rate.ok) {
+      this.log('WARN', `已拦截：${rate.reason}`);
+      d.emit({ kind: 'abuse', connectionId: d.connectionId, fromHash, reason: rate.reason, abuseKind: 'rate' });
       return;
     }
 
     // 输入长度
-    if (d.chat.maxInputLen > 0 && m.content.length > d.chat.maxInputLen) {
+    if (this.chat.maxInputLen > 0 && m.content.length > this.chat.maxInputLen) {
+      this.log('WARN', `已拦截：输入超长（${m.content.length} > ${this.chat.maxInputLen}）`);
       d.emit({ kind: 'abuse', connectionId: d.connectionId, fromHash, reason: '输入超长', abuseKind: 'over_len' });
       await this.reply(m, FALLBACK_REPLY, 'limit', null, t0);
       return;
@@ -67,6 +99,7 @@ export class Pipeline {
     // ④ 安全（入）
     const checked = SafetyFilter.checkIn(m.content, banwords, personaBanned);
     if (checked.rejected) {
+      this.log('WARN', `已拦截：输入命中违禁词（${checked.hit ?? '未知'}）`);
       await this.reply(m, FALLBACK_REPLY, 'refuse', null, t0);
       return;
     }
@@ -76,11 +109,13 @@ export class Pipeline {
 
     // ⑥ LLM 调用
     const llm = d.createLlm();
+    this.log('INFO', `调用 LLM：model=${llm.model}，上下文 ${history.length} 条，prompt ${prompt.length} 字`);
     const res = await llm.complete(prompt);
 
     // token 预算（超限则兜底，不再消耗）
     const totalTokens = res.promptTokens + res.completionTokens;
     if (totalTokens > 0 && !d.tokenBudget.check(fromHash, totalTokens)) {
+      this.log('WARN', `已拦截：超出每日 token 预算（本次 ${totalTokens} token）`);
       d.emit({
         kind: 'abuse',
         connectionId: d.connectionId,
@@ -92,6 +127,17 @@ export class Pipeline {
       return;
     }
     if (totalTokens > 0) d.tokenBudget.add(fromHash, totalTokens);
+
+    if (res.ok) {
+      this.log(
+        'INFO',
+        `LLM 返回：${res.promptTokens}+${res.completionTokens} token，耗时 ${res.elapsedMs}ms${
+          res.stub ? '（演示模式）' : ''
+        }`
+      );
+    } else {
+      this.log('ERROR', `LLM 调用失败：${res.error ?? '未知错误'}（已发送兜底语）`);
+    }
 
     // ⑦ 安全（出）
     const out = res.ok ? SafetyFilter.checkOut(res.text, banwords, personaBanned) : res.text;
@@ -120,14 +166,9 @@ export class Pipeline {
         fromId: m.fromId,
         groupId: m.groupId,
       });
+      this.log('INFO', `回复已发送（${text.length} 字，总耗时 ${Date.now() - t0}ms，${finishReason}）`);
     } catch (e) {
-      d.emit({
-        kind: 'log',
-        connectionId: d.connectionId,
-        level: 'WARN',
-        source: 'pipeline',
-        msg: `回复发送失败：${(e as Error).message}`,
-      });
+      this.log('WARN', `回复发送失败：${(e as Error).message}`);
     }
 
     d.emit({

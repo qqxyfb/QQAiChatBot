@@ -14,6 +14,7 @@ export interface ConnectionItem {
   account?: { host: string; port: number; wsMode: 'forward' | 'reverse'; accessToken?: string };
   riskConfirmed: boolean;
   chat: Record<string, unknown>;
+  llmOverride?: { baseUrl: string; apiKey: string; model: string; temperature?: number; maxTokens?: number };
 }
 
 interface AppState {

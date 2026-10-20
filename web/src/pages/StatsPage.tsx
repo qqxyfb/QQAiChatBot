@@ -4,6 +4,7 @@ import ReactECharts from 'echarts-for-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAppStore } from '../store';
+import { useChartStyle } from '../theme';
 
 interface Overview {
   messages: number;
@@ -31,12 +32,11 @@ interface HourPoint {
   completion: number;
 }
 
-const axisStyle = { axisLine: { lineStyle: { color: '#555' } }, axisLabel: { color: '#aaa' } };
-const splitStyle = { splitLine: { lineStyle: { color: '#2a2a2a' } } };
-
 export default function StatsPage() {
   const { activeConnectionId, setHistoryFromHash } = useAppStore();
   const navigate = useNavigate();
+  const { axis: axisStyle, split: splitStyle, legend: legendStyle, label: labelStyle, text: textStyle } =
+    useChartStyle();
   const [ov, setOv] = useState<Overview | null>(null);
   const [series, setSeries] = useState<SeriesPoint[]>([]);
   const [hourly, setHourly] = useState<HourPoint[]>([]);
@@ -97,7 +97,7 @@ export default function StatsPage() {
       </Row>
 
       <Space>
-        <span style={{ color: '#aaa' }}>时间粒度：</span>
+        <span style={textStyle}>时间粒度：</span>
         <Segmented value={gran} onChange={(v) => setGran(v as 'day' | 'hour')} options={[{ value: 'day', label: '按天' }, { value: 'hour', label: '按小时' }]} />
       </Space>
 
@@ -107,7 +107,7 @@ export default function StatsPage() {
           option={{
             backgroundColor: 'transparent',
             tooltip: { trigger: 'axis' },
-            legend: { data: ['消息数', '输入 Token', '输出 Token'], textStyle: { color: '#aaa' } },
+            legend: { data: ['消息数', '输入 Token', '输出 Token'], textStyle: legendStyle },
             grid: { left: 50, right: 30, top: 40, bottom: 30 },
             xAxis: { type: 'category', data: series.map((x) => x.bucket), ...axisStyle },
             yAxis: { type: 'value', ...axisStyle, ...splitStyle },
@@ -165,13 +165,13 @@ export default function StatsPage() {
               option={{
                 backgroundColor: 'transparent',
                 tooltip: { trigger: 'item' },
-                legend: { textStyle: { color: '#aaa' } },
+                legend: { textStyle: legendStyle },
                 series: [
                   {
                     type: 'pie',
                     radius: '62%',
                     data: Object.entries(dist).map(([k, v]) => ({ name: k, value: v })),
-                    label: { color: '#ccc' },
+                    label: labelStyle,
                   },
                 ],
               }}
@@ -201,7 +201,7 @@ export default function StatsPage() {
           option={{
             backgroundColor: 'transparent',
             tooltip: { trigger: 'axis' },
-            legend: { data: ['消息数', 'Token'], textStyle: { color: '#aaa' } },
+            legend: { data: ['消息数', 'Token'], textStyle: legendStyle },
             grid: { left: 60, right: 60, top: 40, bottom: 40 },
             xAxis: { type: 'category', data: perConn.map((x) => x.name), ...axisStyle },
             yAxis: [

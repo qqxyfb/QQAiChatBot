@@ -1,6 +1,6 @@
 {
   "name": "qqaichatbot",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "QQ AI 聊天机器人多连接后台客户端",
   "main": "electron/main.cjs",
@@ -11,6 +11,8 @@
     "dev": "tsx watch src/main.ts",
     "start": "node --experimental-sqlite dist/main.js",
     "verify:serve": "node scripts/verify-web-serve.cjs",
+    "smoke": "node scripts/smoke-pipeline.cjs && node scripts/smoke-c2c.cjs && node scripts/smoke-config.cjs && node scripts/smoke-runtime.cjs",
+    "e2e": "node scripts/e2e-check.cjs",
     "verify": "npm run build && npm run verify:serve",
     "electron": "electron electron/main.cjs",
     "pack": "npm run build && electron-builder --win"
