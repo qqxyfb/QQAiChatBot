@@ -6,13 +6,16 @@ import type {
   NormalizedMessage,
   Persona,
   ReplyPayload,
+  Segment,
+  TtsConfig,
 } from '../types';
-import type { CachedBanwords } from '../db/repos';
+import type { CachedBanwords, StickerIndex } from '../db/repos';
 import type { ContextManager } from './context';
 import type { RateLimiter, TokenBudget } from './limits';
 import { AccessControl, FALLBACK_REPLY, PromptBuilder, SafetyFilter, TriggerDecision } from './steps';
 import type { LlmGateway, LlmResult } from '../llm/gateway';
 import { shortHash } from '../utils/hash';
+import { DEFAULT_SET_ID, MediaPlanner } from './media-planner';
 
 export interface PipelineDeps {
   connectionId: string;
@@ -26,6 +29,14 @@ export interface PipelineDeps {
   createLlm: () => LlmGateway;
   sessionId: () => number | null;
   emit: (e: MetricEvent) => void;
+  /** 当前人格所绑表情包组的标签枚举（注入 LLM prompt） */
+  getStickerTags: (setId: string) => string[];
+  /** 表情包倒排索引（媒体决策随机取文件用） */
+  getStickerIndex: () => StickerIndex;
+  /** 全局默认 TTS 配置（人格未覆盖时使用） */
+  getGlobalTts: () => TtsConfig;
+  /** 文字合成为语音段；失败返回 null */
+  synthesizeVoice: (text: string, cfg: TtsConfig) => Promise<Segment | null>;
 }
 
 /** 核心链路：每连接一个独立实例 */
@@ -104,8 +115,9 @@ export class Pipeline {
       return;
     }
 
-    // ⑤ 组装 prompt
-    const prompt = PromptBuilder.build(persona.profilePrompt, history, checked.text);
+    // ⑤ 组装 prompt（注入表情包标签枚举，让 LLM 可输出 [sticker:标签]）
+    const stickerSet = persona.stickerSet ?? DEFAULT_SET_ID;
+    const prompt = PromptBuilder.build(persona.profilePrompt, history, checked.text, d.getStickerTags(stickerSet));
 
     // ⑥ LLM 调用
     const llm = d.createLlm();
@@ -142,12 +154,24 @@ export class Pipeline {
     // ⑦ 安全（出）
     const out = res.ok ? SafetyFilter.checkOut(res.text, banwords, personaBanned) : res.text;
 
-    // ⑧ 回复 + 打点
-    const finish: FinishReason = res.stub ? 'stub' : res.ok ? 'normal' : 'error';
-    await this.reply(m, out, finish, res, t0);
+    // ⑧ 媒体决策与装配（两级选择表情包）
+    const plan = MediaPlanner.plan(out, stickerSet, d.getStickerIndex());
 
-    // 上下文更新（写入已 getOrCreate 的 buffer）
-    buf.push({ role: 'user', content: m.content }, { role: 'assistant', content: out });
+    // ⑧.1 语音附加（人格开启 voice 且本条为文字回复时，对文字做 TTS）
+    if (plan.hasText && persona.voice?.enabled) {
+      // 人格级覆盖与全局默认合并：人格可只填音色，厂商/baseUrl 继承全局
+      const ttsCfg = { ...d.getGlobalTts(), ...(persona.voice.tts ?? {}) };
+      const voiceSeg = await d.synthesizeVoice(plan.text, ttsCfg);
+      if (voiceSeg) plan.segments.push(voiceSeg);
+      else this.log('WARN', '语音生成失败，已降级为纯文字回复');
+    }
+
+    // ⑨ 回复 + 打点
+    const finish: FinishReason = res.stub ? 'stub' : res.ok ? 'normal' : 'error';
+    await this.reply(m, plan.text, finish, res, t0, plan.segments);
+
+    // 上下文更新（写入已 getOrCreate 的 buffer；表情包不入上下文，只存纯文本）
+    buf.push({ role: 'user', content: m.content }, { role: 'assistant', content: plan.text });
   }
 
   private async reply(
@@ -155,13 +179,15 @@ export class Pipeline {
     text: string,
     finishReason: FinishReason,
     llm: LlmResult | null,
-    t0: number
+    t0: number,
+    segments?: Segment[]
   ): Promise<void> {
     const d = this.d;
     try {
       await d.sendReply({
         messageId: m.messageId,
         content: text,
+        segments,
         channel: m.channel,
         fromId: m.fromId,
         groupId: m.groupId,

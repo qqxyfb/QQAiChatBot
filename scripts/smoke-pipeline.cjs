@@ -53,6 +53,10 @@ const pipeline = new Pipeline({
     ),
   sessionId: () => null,
   emit: (e) => events.push(e),
+  getStickerTags: () => [],
+  getStickerIndex: () => new Map(),
+  getGlobalTts: () => ({ provider: 'edge', baseUrl: '', apiKey: '', voice: 'zh-CN-XiaoxiaoNeural', model: 'tts-1' }),
+  synthesizeVoice: async () => null,
 });
 
 async function main() {

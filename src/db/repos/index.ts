@@ -9,6 +9,8 @@ import type {
 } from '../../types';
 import { nowMs, dayStr } from '../../utils/time';
 
+export * from './sticker.repo';
+
 // ---------------- connection ----------------
 export interface ConnectionRow {
   connection_id: string;

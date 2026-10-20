@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import WebSocket from 'ws';
 import type { Connector } from './types';
 import type { ConnectionConfig, ConnectorStatus, NormalizedMessage, ReplyPayload } from '../types';
@@ -172,12 +174,25 @@ export class OfficialBotConnector implements Connector {
   }
 
   async sendReply(r: ReplyPayload): Promise<void> {
-    const path =
-      r.channel === 'group'
-        ? `/v2/groups/${encodeURIComponent(r.groupId || '')}/messages`
-        : `/v2/users/${encodeURIComponent(r.fromId || '')}/messages`;
-    const body = { content: r.content, msg_type: 0, msg_id: r.messageId, msg_seq: 1 };
-    const resp = await fetch(`${this.apiBase}${path}`, {
+    if (r.segments && r.segments.length > 0) {
+      for (const seg of r.segments) {
+        if (seg.type === 'text') await this.sendText(r, seg.text);
+        else if (seg.type === 'sticker') await this.sendImage(r, seg.path);
+        else if (seg.type === 'voice') await this.sendAudio(r, seg.path);
+      }
+      return;
+    }
+    await this.sendText(r, r.content);
+  }
+
+  private msgPath(r: ReplyPayload): string {
+    return r.channel === 'group'
+      ? `/v2/groups/${encodeURIComponent(r.groupId || '')}/messages`
+      : `/v2/users/${encodeURIComponent(r.fromId || '')}/messages`;
+  }
+
+  private async post(r: ReplyPayload, body: Record<string, unknown>): Promise<void> {
+    const resp = await fetch(`${this.apiBase}${this.msgPath(r)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `QQBot ${this.token}` },
       body: JSON.stringify(body),
@@ -187,6 +202,47 @@ export class OfficialBotConnector implements Connector {
       const text = await resp.text();
       throw new Error(`发送失败 HTTP ${resp.status}: ${text.slice(0, 200)}`);
     }
+  }
+
+  private sendText(r: ReplyPayload, content: string): Promise<void> {
+    return this.post(r, { content, msg_type: 0, msg_id: r.messageId, msg_seq: 1 });
+  }
+
+  /** 表情包按图片发送：先上传拿 file_info，再发富媒体消息（官方 API 无原生表情类型） */
+  private async sendImage(r: ReplyPayload, filePath: string): Promise<void> {
+    const fileInfo = await this.uploadFile(r, filePath, 1);
+    await this.post(r, { msg_type: 7, msg_id: r.messageId, msg_seq: 1, media: { file_info: fileInfo } });
+  }
+
+  private async sendAudio(r: ReplyPayload, filePath: string): Promise<void> {
+    const fileInfo = await this.uploadFile(r, filePath, 3);
+    await this.post(r, { msg_type: 7, msg_id: r.messageId, msg_seq: 1, media: { file_info: fileInfo } });
+  }
+
+  /**
+   * 上传富媒体文件拿 file_info。
+   * file_type：1=图片、2=视频、3=语音；具体字段与 msg_type/media 结构以 QQ 开放平台当前文档为准。
+   */
+  private async uploadFile(r: ReplyPayload, filePath: string, fileType: number): Promise<string> {
+    const buf = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('file_type', String(fileType));
+    form.append('file', new Blob([buf]), path.basename(filePath));
+    const url =
+      r.channel === 'group'
+        ? `${this.apiBase}/v2/groups/${encodeURIComponent(r.groupId || '')}/files`
+        : `${this.apiBase}/v2/users/${encodeURIComponent(r.fromId || '')}/files`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `QQBot ${this.token}` },
+      body: form,
+      signal: AbortSignal.timeout(30000),
+    });
+    const j = (await resp.json()) as { file_info?: string; message?: string };
+    if (!resp.ok || !j.file_info) {
+      throw new Error(`上传文件失败 HTTP ${resp.status}: ${j.message || ''}`);
+    }
+    return j.file_info;
   }
 
   async disconnect(): Promise<void> {

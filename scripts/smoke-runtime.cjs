@@ -37,6 +37,10 @@ const deps = {
   tokenBudgetRepo: { get: () => 0, add: () => undefined },
   getGlobalLlm: () => ({ baseUrl: 'http://127.0.0.1:7999/v1', apiKey: '', model: 'm', temperature: 0.8, maxTokens: 32 }),
   emit: (e) => events.push(e),
+  getStickerTags: () => [],
+  getStickerIndex: () => new Map(),
+  getGlobalTts: () => ({ provider: 'edge', baseUrl: '', apiKey: '', voice: 'zh-CN-XiaoxiaoNeural', model: 'tts-1' }),
+  synthesizeVoice: async () => null,
 };
 
 let failed = 0;

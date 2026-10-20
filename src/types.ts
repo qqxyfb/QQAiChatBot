@@ -23,6 +23,22 @@ export interface LlmConfig {
   maxTokens: number;
 }
 
+export type TtsProviderType = 'openai-compatible' | 'edge';
+
+export interface TtsConfig {
+  provider: TtsProviderType;
+  baseUrl?: string; // openai-compatible 必填
+  apiKey?: string; // SecretStore 加密存储（edge 无需）
+  voice: string;
+  model?: string; // openai-compatible 模型，默认 tts-1
+}
+
+/** 人格级语音配置：enabled 开启后对文字回复附加语音 */
+export interface VoiceConfig {
+  enabled: boolean;
+  tts?: TtsConfig; // 可选覆盖，缺省用全局默认
+}
+
 export interface StorageConfig {
   dataDir: string;
   historyRetentionDays: number; // <=0 永久
@@ -49,6 +65,7 @@ export interface PricingConfig {
 
 export interface GlobalConfig {
   llm: LlmConfig;
+  tts: TtsConfig;
   storage: StorageConfig;
   server: ServerConfig;
   update: UpdateConfig;
@@ -119,12 +136,37 @@ export interface NormalizedMessage {
   atBot: boolean;
 }
 
+/** 富媒体消息段：回复消息的最小承载单元（text/sticker/voice） */
+export type Segment =
+  | { type: 'text'; text: string }
+  | { type: 'sticker'; stickerId: string; path: string; alt: string }
+  | { type: 'voice'; path: string; duration: number };
+
 export interface ReplyPayload {
   messageId: string;
   content: string;
+  /** 富媒体段；缺省/为空时连接器按 content 发纯文本（向后兼容） */
+  segments?: Segment[];
   channel: Channel;
   fromId?: string;
   groupId?: string;
+}
+
+// ---------- 表情包 ----------
+export interface StickerSet {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  createdAt: number;
+}
+
+export interface Sticker {
+  id: string;
+  setId: string;
+  fileName: string;
+  filePath: string; // 相对 data/stickers 的路径，如 <setId>/开心_01.png
+  tags: string[];
+  createdAt: number;
 }
 
 // ---------- 预检 ----------
@@ -212,6 +254,10 @@ export interface Persona {
   sampleDialogues?: Array<{ user: string; bot: string }>;
   bannedWords?: string[];
   stats?: Record<string, unknown>;
+  /** 绑定的表情包组 id，未绑定时回退默认组 */
+  stickerSet?: string;
+  /** 语音回复配置（开启后文字回复附加语音） */
+  voice?: VoiceConfig;
 }
 
 export interface PersonaListItem extends Persona {

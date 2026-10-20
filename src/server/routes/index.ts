@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ConfigService } from '../../services/config.service';
 import type { ConnectionService } from '../../services/connection.service';
@@ -6,8 +8,10 @@ import type { LogService } from '../../services/log.service';
 import type { StatsService } from '../../services/stats.service';
 import type { HistoryService } from '../../services/history.service';
 import type { UpdateService } from '../../services/update.service';
+import type { StickerService } from '../../services/sticker.service';
+import type { TtsService } from '../../services/tts.service';
 import type { BanwordRepo } from '../../db/repos';
-import type { ConnectorType, GlobalConfig, LogLevel, LogSource } from '../../types';
+import type { ConnectorType, GlobalConfig, LogLevel, LogSource, TtsConfig } from '../../types';
 
 export interface RouteDeps {
   config: ConfigService;
@@ -18,6 +22,8 @@ export interface RouteDeps {
   history: HistoryService;
   update: UpdateService;
   banword: BanwordRepo;
+  sticker: StickerService;
+  tts: TtsService;
   /** 前端产物是否就绪（用于 /api/health 自检与桌面端启动判断） */
   webReady?: () => boolean;
 }
@@ -144,6 +150,10 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
         cfg.llm.apiKey = '';
         masked.push('LLM API Key');
       }
+      if (cfg.tts?.apiKey === '***') {
+        cfg.tts.apiKey = '';
+        masked.push('TTS API Key');
+      }
       if (cfg.server?.accessToken === '***') {
         cfg.server.accessToken = '';
         masked.push('访问令牌');
@@ -242,6 +252,84 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
   app.delete('/api/banword/:id', async (req) => {
     d.banword.remove(Number((req.params as { id: string }).id));
     return ok({ ok: true });
+  });
+
+  // ---------------- stickers（表情包） ----------------
+  app.get('/api/stickers/sets', async () => ok(d.sticker.listSets()));
+
+  app.post('/api/stickers/sets', async (req, reply) => {
+    try {
+      return ok(d.sticker.createSet((req.body as { name?: string })?.name ?? ''));
+    } catch (e) {
+      reply.code(400);
+      return fail(400, (e as Error).message);
+    }
+  });
+
+  app.delete('/api/stickers/sets/:id', async (req, reply) => {
+    try {
+      d.sticker.removeSet(qid(req));
+      return ok({ ok: true });
+    } catch (e) {
+      reply.code(409);
+      return fail(409, (e as Error).message);
+    }
+  });
+
+  app.get('/api/stickers/sets/:id/stickers', async (req) => ok(d.sticker.listStickers(qid(req))));
+
+  app.post('/api/stickers/import', async (req, reply) => {
+    const body = req.body as { setId?: string; files?: Array<{ name: string; data: string }> };
+    if (!body?.setId || !body?.files?.length) {
+      reply.code(400);
+      return fail(400, '缺少组或文件');
+    }
+    try {
+      return ok(d.sticker.importFiles(body.setId, body.files));
+    } catch (e) {
+      reply.code(400);
+      return fail(400, (e as Error).message);
+    }
+  });
+
+  app.put('/api/stickers/:id/tags', async (req) => {
+    d.sticker.updateTags(qid(req), (req.body as { tags?: string[] })?.tags ?? []);
+    return ok({ ok: true });
+  });
+
+  app.delete('/api/stickers/:id', async (req, reply) => {
+    try {
+      d.sticker.removeSticker(qid(req));
+      return ok({ ok: true });
+    } catch (e) {
+      reply.code(404);
+      return fail(404, (e as Error).message);
+    }
+  });
+
+  app.get('/api/stickers/file/:id', async (req, reply) => {
+    const p = d.sticker.previewPath(qid(req));
+    if (!p) {
+      reply.code(404);
+      return fail(404, '表情不存在');
+    }
+    let buf: Buffer;
+    try {
+      buf = fs.readFileSync(p);
+    } catch {
+      reply.code(404);
+      return fail(404, '表情文件缺失');
+    }
+    reply.type(mimeOf(p));
+    return buf;
+  });
+
+  // ---------------- tts（语音合成） ----------------
+  app.get('/api/tts/voices', async () => ok(d.tts.listVoices()));
+
+  app.post('/api/tts/test', async (req) => {
+    const body = req.body as TtsConfig;
+    return ok(await d.tts.test(body));
   });
 
   // ---------------- logs ----------------
@@ -348,7 +436,16 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
 function maskConfig(cfg: GlobalConfig): GlobalConfig {
   const c = JSON.parse(JSON.stringify(cfg)) as GlobalConfig;
   c.llm.apiKey = c.llm.apiKey ? '***' : '';
+  c.tts.apiKey = c.tts?.apiKey ? '***' : '';
   c.server.accessToken = c.server.accessToken ? '***' : '';
   c.update.pat = c.update.pat ? '***' : '';
   return c;
+}
+
+function mimeOf(filePath: string): string {
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  return 'image/png';
 }

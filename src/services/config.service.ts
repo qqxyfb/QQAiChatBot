@@ -38,6 +38,7 @@ export class ConfigService {
         temperature: 0.8,
         maxTokens: 512,
       },
+      tts: { provider: 'edge', baseUrl: '', apiKey: '', voice: 'zh-CN-XiaoxiaoNeural', model: 'tts-1' },
       storage: { dataDir: '', historyRetentionDays: 180, logRetentionDays: 30 },
       server: { port: 8700, allowLan: false, accessToken: '' },
       update: { owner: 'qqxyfb', repo: 'QQAiChatBot', autoCheck: true, pat: '' },
@@ -61,6 +62,7 @@ export class ConfigService {
       ...def,
       ...raw,
       llm: { ...def.llm, ...(raw.llm ?? {}) },
+      tts: { ...def.tts, ...(raw.tts ?? {}) },
       storage: { ...def.storage, ...(raw.storage ?? {}) },
       server: { ...def.server, ...(raw.server ?? {}) },
       update: { ...def.update, ...(raw.update ?? {}) },
@@ -68,6 +70,7 @@ export class ConfigService {
       maxConnections: raw.maxConnections ?? def.maxConnections,
     };
     cfg.llm.apiKey = this.secret.decrypt(cfg.llm.apiKey || '');
+    cfg.tts.apiKey = this.secret.decrypt(cfg.tts.apiKey || '');
     cfg.server.accessToken = this.secret.decrypt(cfg.server.accessToken || '');
     cfg.update.pat = this.secret.decrypt(cfg.update.pat || '');
     this.cache = cfg;
@@ -82,6 +85,7 @@ export class ConfigService {
       cfg.llm.apiKey = cur.llm.apiKey;
       console.warn('[config] 收到脱敏占位 ***，已沿用原值；请检查调用方');
     }
+    if (cfg.tts?.apiKey === '***') cfg.tts.apiKey = cur.tts.apiKey;
     if (cfg.server.accessToken === '***') cfg.server.accessToken = cur.server.accessToken;
     if (cfg.update.pat === '***') cfg.update.pat = cur.update.pat;
 
@@ -93,6 +97,7 @@ export class ConfigService {
     }
     const toStore: GlobalConfig = JSON.parse(JSON.stringify(cfg));
     toStore.llm.apiKey = this.secret.encrypt(cfg.llm.apiKey || '');
+    toStore.tts.apiKey = this.secret.encrypt(cfg.tts?.apiKey || '');
     toStore.server.accessToken = this.secret.encrypt(cfg.server.accessToken || '');
     toStore.update.pat = this.secret.encrypt(cfg.update.pat || '');
 

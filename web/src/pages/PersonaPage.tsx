@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Form, Input, Modal, Popconfirm, Space, Table, Tag, message } from 'antd';
+import { AutoComplete, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, message } from 'antd';
 import { api } from '../api/client';
 
 interface PersonaItem {
@@ -11,6 +11,8 @@ interface PersonaItem {
   builtin: boolean;
   referencedBy: string[];
   profilePrompt: string;
+  stickerSet?: string;
+  voice?: { enabled?: boolean; tts?: { voice?: string } };
 }
 
 export default function PersonaPage() {
@@ -23,6 +25,8 @@ export default function PersonaPage() {
   const [helpText, setHelpText] = useState('');
   const [editing, setEditing] = useState<PersonaItem | null>(null);
   const [editForm] = Form.useForm();
+  const [stickerSets, setStickerSets] = useState<Array<{ id: string; name: string; isDefault: boolean }>>([]);
+  const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
 
   function openEdit(r: PersonaItem) {
     setEditing(r);
@@ -32,6 +36,9 @@ export default function PersonaPage() {
       profilePrompt: r.profilePrompt,
       tags: (r.tags ?? []).join(', '),
       bannedWords: (r.bannedWords ?? []).join('\n'),
+      stickerSet: r.stickerSet || '',
+      voiceEnabled: r.voice?.enabled ?? false,
+      voiceVoice: r.voice?.tts?.voice || '',
     });
   }
 
@@ -51,6 +58,8 @@ export default function PersonaPage() {
           .split('\n')
           .map((s) => s.trim())
           .filter(Boolean),
+        stickerSet: v.stickerSet || undefined,
+        voice: { enabled: !!v.voiceEnabled, tts: { voice: v.voiceVoice || 'zh-CN-XiaoxiaoNeural' } },
       });
       message.success('已保存');
       setEditing(null);
@@ -63,6 +72,14 @@ export default function PersonaPage() {
 
   useEffect(() => {
     void load();
+    api
+      .get<Array<{ id: string; name: string; isDefault: boolean }>>('/api/stickers/sets')
+      .then(setStickerSets)
+      .catch(() => undefined);
+    api
+      .get<Array<{ id: string; name: string }>>('/api/tts/voices')
+      .then(setVoices)
+      .catch(() => undefined);
   }, []);
 
   async function load() {
@@ -240,6 +257,27 @@ export default function PersonaPage() {
           </Form.Item>
           <Form.Item name="tags" label="标签（英文逗号分隔）">
             <Input placeholder="温柔, 句短, 日常向" />
+          </Form.Item>
+          <Form.Item name="stickerSet" label="表情包组（不选则用默认组）">
+            <Select
+              allowClear
+              placeholder="默认组"
+              options={stickerSets.map((s) => ({
+                value: s.id,
+                label: s.isDefault ? `${s.name}（默认）` : s.name,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="voiceEnabled" label="语音回复（对文字回复附加语音）" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Form.Item name="voiceVoice" label="语音音色（留空用全局默认）">
+            <AutoComplete
+              style={{ width: 280 }}
+              options={voices.map((v) => ({ value: v.id, label: `${v.name}（${v.id}）` }))}
+              placeholder="zh-CN-XiaoxiaoNeural"
+              filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
           </Form.Item>
           <Form.Item name="bannedWords" label="安全红线词（每行一个）">
             <Input.TextArea rows={3} />

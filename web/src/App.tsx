@@ -11,11 +11,13 @@ import LogsPage from './pages/LogsPage';
 import StatsPage from './pages/StatsPage';
 import CostPage from './pages/CostPage';
 import HistoryPage from './pages/HistoryPage';
+import StickerPage from './pages/StickerPage';
 
 const MENU = [
   { key: '/', label: '连接管理' },
   { key: '/config', label: '核心配置' },
   { key: '/persona', label: '人格管理' },
+  { key: '/stickers', label: '表情包管理' },
   { key: '/logs', label: '运行日志' },
   { key: '/stats', label: '数据统计' },
   { key: '/cost', label: '使用消耗' },
@@ -170,6 +172,7 @@ function Shell() {
             <Route path="/" element={<ConnectionsPage />} />
             <Route path="/config" element={<ConfigPage />} />
             <Route path="/persona" element={<PersonaPage />} />
+            <Route path="/stickers" element={<StickerPage />} />
             <Route path="/logs" element={<LogsPage />} />
             <Route path="/stats" element={<StatsPage />} />
             <Route path="/cost" element={<CostPage />} />

@@ -11,6 +11,7 @@ import {
   MessageRepo,
   PersonaRepo,
   SnapshotRepo,
+  StickerRepo,
   TokenBudgetRepo,
 } from './db/repos';
 import { SecretStore } from './secret/secret-store';
@@ -21,6 +22,8 @@ import { StatsService } from './services/stats.service';
 import { HistoryService } from './services/history.service';
 import { UpdateService } from './services/update.service';
 import { ConnectionService } from './services/connection.service';
+import { StickerService } from './services/sticker.service';
+import { TtsService } from './services/tts.service';
 import { ConnectionManager } from './manager/connection-manager';
 import { bus, emit } from './events/bus';
 import { buildApp } from './server/app';
@@ -69,6 +72,15 @@ async function main(): Promise<void> {
   personaService.ensureDefaults();
   repos.banword.load();
 
+  // 2.1) 表情包仓储（内存倒排索引）
+  ensureDir(p.stickerDir);
+  const stickerRepo = new StickerRepo(db, p.stickerDir);
+  stickerRepo.load();
+  const stickerService = new StickerService(stickerRepo, p.stickerDir);
+
+  // 2.2) TTS 服务（语音落盘目录）
+  const ttsService = new TtsService(p.ttsDir);
+
   // 4) 事件消费者
   bus.on('message', (e) => repos.message.insert(e));
   bus.on('llm_call', (e) => repos.llmCall.insert(e));
@@ -86,6 +98,10 @@ async function main(): Promise<void> {
     tokenBudgetRepo: repos.tokenBudget,
     getGlobalLlm: () => configService.load().llm,
     emit,
+    getStickerTags: (setId) => stickerRepo.getTags(setId),
+    getStickerIndex: () => stickerRepo.getCache(),
+    getGlobalTts: () => configService.load().tts,
+    synthesizeVoice: (text, cfg) => ttsService.synthesizeToSegment(text, cfg),
     loadConfig: (id) => {
       const cfg = connectionService.get(id);
       if (!cfg) throw new Error(`连接不存在：${id}`);
@@ -140,6 +156,8 @@ async function main(): Promise<void> {
       history: historyService,
       update: updateService,
       banword: repos.banword,
+      sticker: stickerService,
+      tts: ttsService,
     },
     { allowLan: globalCfg.server.allowLan, accessToken: globalCfg.server.accessToken }
   );

@@ -96,13 +96,20 @@ export class PromptBuilder {
   static build(
     profilePrompt: string,
     history: Array<{ role: string; content: string }>,
-    userText: string
+    userText: string,
+    stickerTags?: string[]
   ): string {
     const base = profilePrompt.includes('{user_message}')
       ? profilePrompt.replace(/\{user_message\}/g, userText)
       : `${profilePrompt}\n\n当前对话：\n用户：${userText}\n请回复：`;
-    if (!history.length) return base;
-    const ctx = history.map((h) => `${h.role === 'user' ? '用户' : '你'}：${h.content}`).join('\n');
-    return `${base}\n\n【最近对话】\n${ctx}`;
+    let out = history.length
+      ? `${base}\n\n【最近对话】\n${history.map((h) => `${h.role === 'user' ? '用户' : '你'}：${h.content}`).join('\n')}`
+      : base;
+    if (stickerTags && stickerTags.length > 0) {
+      out += `\n\n【表情包】若适合，可在这条回复末尾追加 [sticker:标签] 发送表情包（只发图、不配文字）。可选标签仅限：${stickerTags.join(
+        '、'
+      )}。若不合适则不要输出该标记。`;
+    }
+    return out;
   }
 }

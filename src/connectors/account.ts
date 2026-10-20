@@ -161,10 +161,11 @@ export class AccountLoginConnector implements Connector {
   async sendReply(r: ReplyPayload): Promise<void> {
     if (!this.ws || this.ws.readyState !== WS_OPEN) throw new Error('连接未就绪');
     const action = r.channel === 'group' ? 'send_group_msg' : 'send_private_msg';
+    const message = buildMessage(r);
     const params =
       r.channel === 'group'
-        ? { group_id: Number(r.groupId), message: r.content }
-        : { user_id: Number(r.fromId), message: r.content };
+        ? { group_id: Number(r.groupId), message }
+        : { user_id: Number(r.fromId), message };
     this.ws.send(JSON.stringify({ action, params, echo: `s-${Date.now()}` }));
   }
 
@@ -200,4 +201,17 @@ function extractText(message: unknown): string {
       .trim();
   }
   return '';
+}
+
+/** 将富媒体段拼装为 OneBot message 段数组；无 segments 时回退纯文本字符串 */
+function buildMessage(r: ReplyPayload): unknown {
+  if (r.segments && r.segments.length > 0) {
+    return r.segments.map((seg) => {
+      if (seg.type === 'text') return { type: 'text', data: { text: seg.text } };
+      if (seg.type === 'sticker') return { type: 'image', data: { file: seg.path } };
+      if (seg.type === 'voice') return { type: 'record', data: { file: seg.path } };
+      return { type: 'text', data: { text: '' } };
+    });
+  }
+  return r.content;
 }

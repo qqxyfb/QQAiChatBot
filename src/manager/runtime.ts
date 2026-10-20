@@ -4,8 +4,10 @@ import type {
   LlmConfig,
   MetricEvent,
   Persona,
+  Segment,
+  TtsConfig,
 } from '../types';
-import type { BanwordRepo, PersonaRepo, TokenBudgetRepo } from '../db/repos';
+import type { BanwordRepo, PersonaRepo, TokenBudgetRepo, StickerIndex } from '../db/repos';
 import type { Connector } from '../connectors/types';
 import { OfficialBotConnector } from '../connectors/official';
 import { AccountLoginConnector } from '../connectors/account';
@@ -22,6 +24,10 @@ export interface RuntimeDeps {
   /** 全局 LLM 配置用读取器而非快照：核心配置改了无需重启即可生效 */
   getGlobalLlm: () => LlmConfig;
   emit: (e: MetricEvent) => void;
+  getStickerTags: (setId: string) => string[];
+  getStickerIndex: () => StickerIndex;
+  getGlobalTts: () => TtsConfig;
+  synthesizeVoice: (text: string, cfg: TtsConfig) => Promise<Segment | null>;
 }
 
 const FALLBACK_PERSONA: Persona = {
@@ -105,6 +111,10 @@ export class ConnectionRuntime {
         ),
       sessionId: () => this.sessionId,
       emit: this.deps.emit,
+      getStickerTags: (setId) => this.deps.getStickerTags(setId),
+      getStickerIndex: () => this.deps.getStickerIndex(),
+      getGlobalTts: () => this.deps.getGlobalTts(),
+      synthesizeVoice: (text, cfg) => this.deps.synthesizeVoice(text, cfg),
     });
   }
 

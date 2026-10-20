@@ -1,15 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Divider, Form, Input, InputNumber, Select, Space, Switch, Table, message, theme } from 'antd';
+import { AutoComplete, Button, Card, Divider, Form, Input, InputNumber, Select, Space, Switch, Table, message, theme } from 'antd';
 import { api } from '../api/client';
 import type { GlobalConfig } from '../types';
 
 export default function ConfigPage() {
   const [form] = Form.useForm();
   const [testResult, setTestResult] = useState('');
+  const [ttsResult, setTtsResult] = useState('');
+  const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
   const { token } = theme.useToken();
 
   useEffect(() => {
     void load();
+    api
+      .get<Array<{ id: string; name: string }>>('/api/tts/voices')
+      .then(setVoices)
+      .catch(() => undefined);
   }, []);
 
   async function load() {
@@ -56,6 +62,16 @@ export default function ConfigPage() {
     }
   }
 
+  async function testTts() {
+    try {
+      const v = form.getFieldsValue();
+      const r = await api.post<{ ok: boolean; message: string }>('/api/tts/test', v.tts);
+      setTtsResult(`${r.ok ? '成功' : '失败'} · ${r.message}`);
+    } catch (e) {
+      setTtsResult(`失败 · ${(e as Error).message}`);
+    }
+  }
+
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
@@ -89,6 +105,38 @@ export default function ConfigPage() {
           </Form.Item>
         </Space>
         {testResult && <div style={{ marginBottom: 12, color: token.colorTextSecondary }}>{testResult}</div>}
+
+        <Divider orientation="left">TTS 默认配置（语音回复）</Divider>
+        <Space size="large" wrap>
+          <Form.Item name={['tts', 'provider']} label="厂商">
+            <Select
+              style={{ width: 180 }}
+              options={[
+                { value: 'edge', label: 'Edge（免费）' },
+                { value: 'openai-compatible', label: 'OpenAI 兼容' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name={['tts', 'voice']} label="音色">
+            <AutoComplete
+              style={{ width: 240 }}
+              options={voices.map((v) => ({ value: v.id, label: `${v.name}（${v.id}）` }))}
+              placeholder="zh-CN-XiaoxiaoNeural"
+              filterOption={(input, option) => String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())}
+            />
+          </Form.Item>
+          <Form.Item name={['tts', 'model']} label="模型（OpenAI 兼容用）">
+            <Input placeholder="tts-1" style={{ width: 140 }} />
+          </Form.Item>
+        </Space>
+        <Form.Item name={['tts', 'baseUrl']} label="Base URL（OpenAI 兼容必填，Edge 可留空）">
+          <Input placeholder="https://api.openai.com/v1" />
+        </Form.Item>
+        <Form.Item name={['tts', 'apiKey']} label="API Key（Edge 可留空）">
+          <Input.Password visibilityToggle placeholder="OpenAI 兼容厂商的 key" />
+        </Form.Item>
+        <Button onClick={testTts}>测试 TTS</Button>
+        {ttsResult && <div style={{ marginTop: 8, color: token.colorTextSecondary }}>{ttsResult}</div>}
 
         <Divider orientation="left">存储</Divider>
         <Form.Item name={['storage', 'dataDir']} label="数据目录（留空使用默认）">

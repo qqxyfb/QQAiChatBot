@@ -124,5 +124,7 @@ export function paths(dataDir: string) {
     exportDir: path.join(dataDir, 'export'),
     configFile: path.join(dataDir, 'config.json'),
     secretsFile: path.join(dataDir, 'secrets.json'),
+    stickerDir: path.join(dataDir, 'stickers'),
+    ttsDir: path.join(dataDir, 'tts'),
   };
 }

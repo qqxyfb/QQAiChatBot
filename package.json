@@ -1,6 +1,6 @@
 {
   "name": "qqaichatbot",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "QQ AI 聊天机器人多连接后台客户端",
   "main": "electron/main.cjs",
