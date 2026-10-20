@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -19,6 +20,7 @@ import {
   theme,
 } from 'antd';
 import { api } from '../api/client';
+import ModelAutoComplete from '../components/ModelAutoComplete';
 import { useAppStore, type ConnectionItem } from '../store';
 
 export default function ConnectionsPage() {
@@ -84,6 +86,8 @@ export default function ConnectionsPage() {
       host: c.account?.host,
       port: c.account?.port,
       wsMode: c.account?.wsMode,
+      accessToken: c.account?.accessToken,
+      path: c.account?.path,
       riskConfirmed: c.riskConfirmed,
       mode: chat.mode,
       groupList: ((chat.groupList as string[]) ?? []).join('\n'),
@@ -97,6 +101,7 @@ export default function ConnectionsPage() {
       trigger: chat.trigger,
       triggerKeywords: ((chat.triggerKeywords as string[]) ?? []).join('\n'),
       randomProbability: chat.randomProbability,
+      replyQuote: (chat.replyQuote as string) ?? 'auto',
       llmBaseUrl: c.llmOverride?.baseUrl,
       llmApiKey: c.llmOverride?.apiKey,
       llmModel: c.llmOverride?.model,
@@ -130,7 +135,16 @@ export default function ConnectionsPage() {
             ? { appId: v.appId, appSecret: v.appSecret, apiDomain: v.apiDomain }
             : undefined,
         account:
-          detail.type === 'account' ? { host: v.host, port: v.port, wsMode: v.wsMode } : undefined,
+          detail.type === 'account'
+            ? {
+                host: v.host,
+                port: v.port,
+                wsMode: v.wsMode,
+                // NapCat 开启 token 校验时必填，之前这里被整体丢弃，导致一直 401
+                accessToken: (v.accessToken ?? '').trim(),
+                path: (v.path ?? '').trim() || undefined,
+              }
+            : undefined,
         chat: {
           ...(detail.chat as Record<string, unknown>),
           mode: v.mode,
@@ -153,6 +167,7 @@ export default function ConnectionsPage() {
             .map((s) => s.trim())
             .filter(Boolean),
           randomProbability: v.randomProbability,
+          replyQuote: v.replyQuote ?? 'auto',
         },
       };
       await api.put(`/api/connections/${detail.connectionId}`, payload);
@@ -197,17 +212,10 @@ export default function ConnectionsPage() {
         const r = await api.post<{
           ok: boolean;
           message: string;
-          precheck?: { items: Array<{ status: string; message: string }> };
+          precheck?: { items: Array<{ key?: string; level?: string; status: string; message: string }> };
         }>(`/api/connections/${c.connectionId}/start`);
         if (!r.ok) {
-          Modal.error({
-            title: '启动失败',
-            content:
-              r.precheck?.items
-                ?.filter((i) => i.status === 'fail')
-                .map((i) => i.message)
-                .join('；') || r.message,
-          });
+          showStartFailure(r.message, r.precheck?.items);
         } else {
           message.success('已启动');
         }
@@ -226,8 +234,18 @@ export default function ConnectionsPage() {
         </Button>
         <Button
           onClick={async () => {
-            const r = await api.post<{ started: string[]; failed: unknown[] }>('/api/connections/start-all');
-            message.success(`已启动 ${r.started.length} 个，失败 ${r.failed.length} 个`);
+            const r = await api.post<{
+              started: string[];
+              failed: Array<{ id: string; message: string }>;
+            }>('/api/connections/start-all');
+            if (r.failed.length) {
+              showStartFailure(
+                `已启动 ${r.started.length} 个，失败 ${r.failed.length} 个`,
+                r.failed.map((f) => ({ status: 'fail', level: 'block', message: f.message }))
+              );
+            } else {
+              message.success(`已启动 ${r.started.length} 个连接`);
+            }
             await loadConnections();
           }}
         >
@@ -388,11 +406,38 @@ export default function ConnectionsPage() {
                 <Form.Item name="wsMode" label="连接方式">
                   <Select
                     options={[
-                      { value: 'forward', label: '正向 WS（连接 NapCat）' },
-                      { value: 'reverse', label: '反向 WS（暂未实现）' },
+                      { value: 'forward', label: '正向 WS（本程序连接 NapCat）' },
+                      { value: 'reverse', label: '反向 WS（NapCat 主动连本程序）' },
                     ]}
                   />
                 </Form.Item>
+                <Form.Item
+                  name="path"
+                  label="WebSocket 路径（一般留空）"
+                  extra="NapCat 的 WebSocket 服务端默认路径为 /，若你改过路径或走了反向代理再填"
+                >
+                  <Input placeholder="/" />
+                </Form.Item>
+                <Form.Item
+                  name="accessToken"
+                  label="Access Token"
+                  extra="NapCat「网络配置 → WebSocket 服务器」里的 Token；服务端没开 token 校验时留空。填错会报 401"
+                >
+                  <Input.Password visibilityToggle placeholder="与 NapCat 配置保持一致" />
+                </Form.Item>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="启动报 401 怎么处理"
+                  description={
+                    <span style={{ fontSize: 12.5 }}>
+                      401 表示 NapCat 要求 token 校验：把 NapCat 里配置的 Token 原样填到上面的
+                      「Access Token」，不要带 Bearer 前缀；路径与端口也要和 NapCat 的 WebSocket
+                      服务器一致。
+                    </span>
+                  }
+                />
                 <Form.Item name="riskConfirmed" label="封号风险确认" valuePropName="checked">
                   <Switch checkedChildren="已知晓" unCheckedChildren="未确认" />
                 </Form.Item>
@@ -415,6 +460,24 @@ export default function ConnectionsPage() {
             </Form.Item>
             <Form.Item name="randomProbability" label="闲聊概率（0~1，仅概率模式生效）">
               <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              name="replyQuote"
+              label="群聊引用回复"
+              extra={
+                detail.type === 'official'
+                  ? 'QQ 官方机器人由平台决定消息形态，此项仅对「登录 QQ 号」生效'
+                  : '「被 @ 时引用」会在回复里带上原消息，群里能看清在回谁'
+              }
+            >
+              <Select
+                disabled={detail.type === 'official'}
+                options={[
+                  { value: 'auto', label: '被 @ 时引用（推荐）' },
+                  { value: 'always', label: '群聊每条都引用' },
+                  { value: 'off', label: '从不引用（只发消息）' },
+                ]}
+              />
             </Form.Item>
             <Form.Item name="mode" label="名单模式">
               <Select
@@ -474,8 +537,21 @@ export default function ConnectionsPage() {
             <Form.Item name="llmApiKey" label="API Key">
               <Input.Password placeholder="留空使用全局 Key" />
             </Form.Item>
-            <Form.Item name="llmModel" label="模型">
-              <Input placeholder="deepseek-chat" />
+            <Form.Item
+              name="llmModel"
+              label="模型"
+              extra="留空使用全局模型；可点「获取模型」从该 Base URL 拉取候选"
+            >
+              <ModelAutoComplete
+                placeholder="deepseek-chat"
+                getCredentials={() => {
+                  const v = detailForm.getFieldsValue();
+                  return {
+                    baseUrl: v.llmBaseUrl || undefined,
+                    apiKey: v.llmApiKey || undefined,
+                  };
+                }}
+              />
             </Form.Item>
           </Form>
         )}
@@ -511,4 +587,51 @@ export default function ConnectionsPage() {
       </Modal>
     </div>
   );
+}
+
+/**
+ * 启动失败弹窗：完整展示失败原因 + 预检明细。
+ * 之前只拼接「未通过项」，一旦是连接阶段报错（如 NapCat 401）就只剩半句话，
+ * 用户看不到上下文。这里改为可滚动、可复制的完整文本。
+ */
+function showStartFailure(
+  message: string,
+  items?: Array<{ level?: string; status: string; message: string }>
+): void {
+  Modal.error({
+    title: '启动失败',
+    width: 680,
+    okText: '知道了',
+    content: (
+      <div style={{ maxHeight: 420, overflow: 'auto', paddingRight: 4 }}>
+        <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', userSelect: 'text' }}>{message}</div>
+        {items?.length ? (
+          <>
+            <div style={{ marginTop: 14, fontWeight: 600 }}>预检明细</div>
+            <ul style={{ paddingLeft: 18, margin: '6px 0 0' }}>
+              {items.map((i, idx) => (
+                <li
+                  key={`${i.message}-${idx}`}
+                  style={{
+                    color:
+                      i.status !== 'fail'
+                        ? undefined
+                        : i.level === 'block'
+                          ? '#ff4d4f'
+                          : '#faad14',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    marginBottom: 4,
+                  }}
+                >
+                  {i.status === 'fail' ? '未通过' : '通过'}
+                  （{i.level === 'block' ? '阻塞' : '提示'}）：{i.message}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </div>
+    ),
+  });
 }

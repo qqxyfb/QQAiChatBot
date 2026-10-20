@@ -84,9 +84,21 @@ export interface OfficialConfig {
 export interface AccountConfig {
   host: string;
   port: number;
+  /** NapCat / OneBot 的 Access Token（与 NapCat 服务端配置一致，留空表示服务端未开校验） */
   accessToken?: string;
+  /** WebSocket 路径，默认 /；NapCat 一般留空，走反代或自定义路径时填写 */
+  path?: string;
   wsMode: 'forward' | 'reverse';
 }
+
+/**
+ * 群聊引用回复策略：
+ *  - auto：被 @ 时引用原消息（默认，能看清在回谁）
+ *  - always：群里所有回复都引用
+ *  - off：不引用，直接发消息
+ * 私聊没有引用语义，任何策略下都不会带引用。
+ */
+export type ReplyQuoteMode = 'auto' | 'always' | 'off';
 
 export type RateLimitScope = 'connection' | 'user';
 
@@ -111,6 +123,8 @@ export interface ChatConfig {
   trigger: TriggerMode;
   triggerKeywords?: string[]; // [P1] 关键词触发
   randomProbability?: number; // [P1] 概率闲聊 0~1
+  /** 群聊引用回复策略（缺省 auto：被 @ 时引用） */
+  replyQuote?: ReplyQuoteMode;
 }
 
 export interface ConnectionConfig {
@@ -142,11 +156,26 @@ export type Segment =
   | { type: 'sticker'; stickerId: string; path: string; alt: string }
   | { type: 'voice'; path: string; duration: number };
 
+/**
+ * 表情包发送策略（人格级）：真正决定「发不发」的是这里的闸门，
+ * 而不是 LLM 有没有输出 [sticker:标签]。缺省走 DEFAULT_STICKER_POLICY。
+ */
+export interface StickerPolicy {
+  /** 总开关：关掉后即使 LLM 标记了也不会发图 */
+  enabled: boolean;
+  /** LLM 命中表情包标签后，实际发送的概率 0~1（控制整体频率） */
+  probability: number;
+  /** 同一会话两次表情包的最小间隔（秒），0 表示不限（防止连发） */
+  minIntervalSec: number;
+}
+
 export interface ReplyPayload {
   messageId: string;
   content: string;
   /** 富媒体段；缺省/为空时连接器按 content 发纯文本（向后兼容） */
   segments?: Segment[];
+  /** 需要引用回复的原消息 id（群聊 @ 场景），连接器据此补 reply 段 */
+  quoteMessageId?: string;
   channel: Channel;
   fromId?: string;
   groupId?: string;
@@ -170,7 +199,7 @@ export interface Sticker {
 }
 
 // ---------- 预检 ----------
-export type PrecheckKey = 'credential' | 'dependency' | 'persona' | 'llm';
+export type PrecheckKey = 'credential' | 'dependency' | 'persona' | 'llm' | 'onbot';
 export interface PrecheckItem {
   key: PrecheckKey;
   level: 'block' | 'warn';
@@ -256,6 +285,8 @@ export interface Persona {
   stats?: Record<string, unknown>;
   /** 绑定的表情包组 id，未绑定时回退默认组 */
   stickerSet?: string;
+  /** 表情包发送策略（频率控制） */
+  sticker?: StickerPolicy;
   /** 语音回复配置（开启后文字回复附加语音） */
   voice?: VoiceConfig;
 }

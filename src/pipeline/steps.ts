@@ -47,8 +47,31 @@ export class TriggerDecision {
   }
 }
 
-/** 白 / 黑名单（群 + 对象两级） */
-export class AccessControl {
+export interface QuoteDecision extends Decision {
+  quote: boolean;
+}
+
+/**
+ * 引用回复决策：群聊里「回谁」必须看得见，否则 @ 之后发出的消息像是凭空插话。
+ * 默认 auto = 被 @ 才引用，避免每句话都拖着一条引用；私聊永远不引用。
+ */
+export class ReplyQuote {
+  static should(m: NormalizedMessage, chat: ChatConfig): boolean {
+    return ReplyQuote.evaluate(m, chat).quote;
+  }
+
+  static evaluate(m: NormalizedMessage, chat: ChatConfig): QuoteDecision {
+    const mode = chat.replyQuote ?? 'auto';
+    if (mode === 'off') return { ok: false, quote: false, reason: '引用回复已关闭（off）' };
+    if (m.channel !== 'group') return { ok: false, quote: false, reason: '私聊无引用语义，直接发送' };
+    if (mode === 'always') return { ok: true, quote: true, reason: '群聊引用回复（always）' };
+    return m.atBot
+      ? { ok: true, quote: true, reason: '被 @，使用引用回复' }
+      : { ok: false, quote: false, reason: '群聊未被 @，不引用' };
+  }
+}
+
+/** 白 / 黑名单（群 + 对象两级） */export class AccessControl {
   static allow(m: NormalizedMessage, chat: ChatConfig): boolean {
     return AccessControl.evaluate(m, chat).ok;
   }
@@ -97,7 +120,8 @@ export class PromptBuilder {
     profilePrompt: string,
     history: Array<{ role: string; content: string }>,
     userText: string,
-    stickerTags?: string[]
+    stickerTags?: string[],
+    stickerHint?: string
   ): string {
     const base = profilePrompt.includes('{user_message}')
       ? profilePrompt.replace(/\{user_message\}/g, userText)
@@ -106,9 +130,11 @@ export class PromptBuilder {
       ? `${base}\n\n【最近对话】\n${history.map((h) => `${h.role === 'user' ? '用户' : '你'}：${h.content}`).join('\n')}`
       : base;
     if (stickerTags && stickerTags.length > 0) {
-      out += `\n\n【表情包】若适合，可在这条回复末尾追加 [sticker:标签] 发送表情包（只发图、不配文字）。可选标签仅限：${stickerTags.join(
-        '、'
-      )}。若不合适则不要输出该标记。`;
+      // 只把表情包说成「文字后面的点缀」：既不发空消息，也避免每条都甩图。
+      out +=
+        `\n\n【表情包】表情包是可选点缀，${stickerHint || '多数回复不要用，只在情绪明显时偶尔用一次'}。` +
+        `用法：先正常写出文字回复，再在末尾追加 [sticker:标签]，例如「好呀，我也这么觉得[sticker:开心]」。` +
+        `不要只输出标记而不写文字，也不要连续多条都带。可选标签仅限：${stickerTags.join('、')}；不合适就不输出该标记。`;
     }
     return out;
   }

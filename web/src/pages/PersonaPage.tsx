@@ -1,5 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { AutoComplete, Button, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, message } from 'antd';
+import {
+  AutoComplete,
+  Button,
+  Col,
+  Divider,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Switch,
+  Table,
+  Tag,
+  message,
+} from 'antd';
 import { api } from '../api/client';
 
 interface PersonaItem {
@@ -12,8 +29,20 @@ interface PersonaItem {
   referencedBy: string[];
   profilePrompt: string;
   stickerSet?: string;
+  sticker?: { enabled?: boolean; probability?: number; minIntervalSec?: number };
   voice?: { enabled?: boolean; tts?: { voice?: string } };
 }
+
+/** 表情包默认策略，与后端 DEFAULT_STICKER_POLICY 保持一致 */
+const DEFAULT_STICKER = { enabled: true, probability: 0.3, minIntervalSec: 120 };
+
+/** 频率预设：一次把「概率 + 冷却」都填好，避免用户纠结两个数字 */
+const STICKER_PRESETS: Array<{ value: string; label: string; probability: number; minIntervalSec: number }> = [
+  { value: 'rare', label: '克制：10% 命中，间隔 5 分钟', probability: 0.1, minIntervalSec: 300 },
+  { value: 'normal', label: '适中：30% 命中，间隔 2 分钟（默认）', probability: 0.3, minIntervalSec: 120 },
+  { value: 'often', label: '活跃：60% 命中，间隔 30 秒', probability: 0.6, minIntervalSec: 30 },
+  { value: 'off', label: '关闭表情包（只发文字）', probability: 0, minIntervalSec: 0 },
+];
 
 export default function PersonaPage() {
   const [list, setList] = useState<PersonaItem[]>([]);
@@ -37,6 +66,9 @@ export default function PersonaPage() {
       tags: (r.tags ?? []).join(', '),
       bannedWords: (r.bannedWords ?? []).join('\n'),
       stickerSet: r.stickerSet || '',
+      stickerEnabled: r.sticker?.enabled ?? DEFAULT_STICKER.enabled,
+      stickerProbability: r.sticker?.probability ?? DEFAULT_STICKER.probability,
+      stickerMinIntervalSec: r.sticker?.minIntervalSec ?? DEFAULT_STICKER.minIntervalSec,
       voiceEnabled: r.voice?.enabled ?? false,
       voiceVoice: r.voice?.tts?.voice || '',
     });
@@ -59,6 +91,11 @@ export default function PersonaPage() {
           .map((s) => s.trim())
           .filter(Boolean),
         stickerSet: v.stickerSet || undefined,
+        sticker: {
+          enabled: !!v.stickerEnabled,
+          probability: Number(v.stickerProbability ?? DEFAULT_STICKER.probability),
+          minIntervalSec: Number(v.stickerMinIntervalSec ?? DEFAULT_STICKER.minIntervalSec),
+        },
         voice: { enabled: !!v.voiceEnabled, tts: { voice: v.voiceVoice || 'zh-CN-XiaoxiaoNeural' } },
       });
       message.success('已保存');
@@ -268,6 +305,55 @@ export default function PersonaPage() {
               }))}
             />
           </Form.Item>
+
+          <Divider orientation="left" plain style={{ margin: '8px 0 12px' }}>
+            表情包频率
+          </Divider>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="频率预设" extra="一键填入下面两项，仍可手动微调">
+                <Select
+                  placeholder="选择一档快速套用"
+                  options={STICKER_PRESETS.map((p) => ({ value: p.value, label: p.label }))}
+                  onChange={(val: string) => {
+                    const preset = STICKER_PRESETS.find((p) => p.value === val);
+                    if (!preset) return;
+                    editForm.setFieldsValue({
+                      stickerEnabled: preset.value !== 'off',
+                      stickerProbability: preset.probability,
+                      stickerMinIntervalSec: preset.minIntervalSec,
+                    });
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="stickerEnabled" label="允许发表情包" valuePropName="checked">
+                <Switch checkedChildren="开" unCheckedChildren="关" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item
+                name="stickerProbability"
+                label="发送概率（0~1）"
+                extra="模型想发表情包时，实际发出去的概率"
+              >
+                <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="stickerMinIntervalSec"
+                label="最小间隔（秒）"
+                extra="同一会话两次表情包的最短间隔，0 = 不限"
+              >
+                <InputNumber min={0} step={30} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item name="voiceEnabled" label="语音回复（对文字回复附加语音）" valuePropName="checked">
             <Switch />
           </Form.Item>

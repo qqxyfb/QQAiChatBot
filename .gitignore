@@ -5,6 +5,10 @@ dist.bak-*/
 web/dist.bak-*/
 build/
 release/
+release-0.1.5/
+release-0.1.6/
+release-v0.1.6/
+release-v0.1.7/
 release.bak-*/
 release-portable/
 release-portable.bak-*/
@@ -20,6 +24,7 @@ dist-release/
 
 # 构建/调试临时物
 .tmp-electron/
+.tmp-*/
 .npm-cache-tmp/
 .smoke-data/
 locksync-*.json

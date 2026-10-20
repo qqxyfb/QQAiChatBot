@@ -11,7 +11,7 @@ import type { UpdateService } from '../../services/update.service';
 import type { StickerService } from '../../services/sticker.service';
 import type { TtsService } from '../../services/tts.service';
 import type { BanwordRepo } from '../../db/repos';
-import type { ConnectorType, GlobalConfig, LogLevel, LogSource, TtsConfig } from '../../types';
+import type { ConnectorType, GlobalConfig, LlmConfig, LogLevel, LogSource, TtsConfig } from '../../types';
 
 export interface RouteDeps {
   config: ConfigService;
@@ -130,6 +130,24 @@ export function registerRoutes(app: FastifyInstance, d: RouteDeps): void {
   app.post('/api/config/test-llm', async (req) => {
     const body = req.body as { baseUrl: string; apiKey: string; model: string; temperature?: number; maxTokens?: number };
     return ok(await d.config.testLlm({ ...body, temperature: body.temperature ?? 0.8, maxTokens: body.maxTokens ?? 512 }));
+  });
+
+  /**
+   * 拉取可选模型列表（透传 OpenAI 兼容 /v1/models）。
+   * 前端用它在「模型」字段做下拉候选，减少手填模型名出错。
+   * apiKey 留空时回退到已保存的 Key（用户往往只改了 Base URL 就想看列表）。
+   */
+  app.post('/api/config/models', async (req) => {
+    const body = (req.body ?? {}) as Partial<LlmConfig>;
+    const saved = d.config.load().llm;
+    const cfg = {
+      baseUrl: (body.baseUrl ?? '').trim() || saved.baseUrl,
+      apiKey: (body.apiKey ?? '').trim() || saved.apiKey,
+      model: body.model ?? saved.model,
+      temperature: saved.temperature,
+      maxTokens: saved.maxTokens,
+    };
+    return ok(await d.config.listModels(cfg));
   });
 
   app.get('/api/config/export', async (req, reply) => {

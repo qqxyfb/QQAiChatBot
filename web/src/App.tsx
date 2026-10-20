@@ -74,11 +74,18 @@ function Shell() {
   }, []);
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    // 整页固定 100vh，只有右侧内容区滚动：左侧菜单不会再被页面滚动带跑
+    <Layout style={{ height: '100vh', overflow: 'hidden' }}>
       <Layout.Sider
         width={200}
         theme={resolved === 'dark' ? 'dark' : 'light'}
-        style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}
+        style={{
+          height: '100vh',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          flexShrink: 0,
+          borderRight: `1px solid ${token.colorBorderSecondary}`,
+        }}
       >
         <div
           style={{
@@ -98,9 +105,10 @@ function Shell() {
           onClick={({ key }) => navigate(key)}
         />
       </Layout.Sider>
-      <Layout>
+      <Layout style={{ height: '100vh', overflow: 'hidden' }}>
         <Layout.Header
           style={{
+            flex: '0 0 auto',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
@@ -136,7 +144,7 @@ function Shell() {
             />
           </Space>
         </Layout.Header>
-        <Layout.Content style={{ padding: 24 }}>
+        <Layout.Content style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24 }}>
           {updateInfo?.latest && isNewerVersion(updateInfo.latest.version, updateInfo.current) && (
             <Alert
               type="info"

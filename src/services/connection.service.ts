@@ -1,4 +1,5 @@
 import type { Database } from '../db';
+import net from 'node:net';
 import type { ConnectionRepo, PersonaRepo } from '../db/repos';
 import type { ConnectionManager } from '../manager/connection-manager';
 import type { SecretStore } from '../secret/secret-store';
@@ -11,6 +12,25 @@ import type {
   PrecheckResult,
 } from '../types';
 import { dayStartMs } from '../utils/time';
+
+/** TCP 探活：只判断端口能否连上，用来区分「NapCat 没开」和「token 不对」 */
+function probeTcp(host: string, port: number, timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const target = (host || '').trim().replace(/^wss?:\/\//i, '').split('/')[0];
+    const socket = net.connect({ host: target, port });
+    let done = false;
+    const finish = (ok: boolean): void => {
+      if (done) return;
+      done = true;
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
 
 export function defaultConnectionConfig(name: string, type: ConnectorType): ConnectionConfig {
   return {
@@ -41,6 +61,7 @@ export function defaultConnectionConfig(name: string, type: ConnectorType): Conn
       trigger: 'at',
       triggerKeywords: [],
       randomProbability: 0.1,
+      replyQuote: 'auto',
     },
   };
 }
@@ -162,7 +183,7 @@ export class ConnectionService {
         key: 'credential',
         level: 'block',
         status: ok ? 'pass' : 'fail',
-        message: ok ? '凭据完整' : '连接凭据不完整：请填写 OneBot 地址 / 端口',
+        message: ok ? 'OneBot 地址/端口已填写' : '连接凭据不完整：请填写 OneBot 地址 / 端口',
       });
     }
 
@@ -188,23 +209,41 @@ export class ConnectionService {
   }
 
   /**
-   * 异步预检：在同步预检之上补 LLM 连通性与模型探测。
-   * LLM 探不通视为阻塞项 —— 宁可启动失败并给出原因，也不要 running 之后完全静默。
+   * 异步预检：在同步预检之上补 OneBot 端口探活与 LLM 连通性/模型探测。
+   *
+   * 分级原则：
+   *  - 端口连不上、LLM 不可达、LLM 鉴权失败 → 阻塞（这些情况下启动必然静默失败）
+   *  - 模型名不在 /models 列表 → 仅警告（中转站列表常不完整，不该把人挡在门外）
    */
   async precheckAsync(id: string): Promise<PrecheckResult> {
     const pre = this.precheck(id);
     const cfg = this.get(id);
     if (!cfg) throw new Error('连接不存在');
 
+    const items = pre.items.filter((i) => i.key !== 'llm');
+
+    // OneBot 端口探活：区分「NapCat 没启动/端口不对」和「token 不对」
+    if (cfg.type === 'account' && cfg.account?.wsMode !== 'reverse' && cfg.account?.host && cfg.account?.port) {
+      const reachable = await probeTcp(cfg.account.host, cfg.account.port);
+      items.push({
+        key: 'onbot',
+        level: 'block',
+        status: reachable ? 'pass' : 'fail',
+        message: reachable
+          ? `NapCat 端口可达（${cfg.account.host}:${cfg.account.port}）`
+          : `无法连接 ${cfg.account.host}:${cfg.account.port}：请确认 NapCat 已启动，OneBot 11 的 WebSocket 服务端已开启且端口一致`,
+      });
+    }
+
     const llm = cfg.llmOverride ?? this.config.load().llm;
     const probe = await this.config.probeLlm(llm);
-    const llmItem: PrecheckItem = {
+    items.push({
       key: 'llm',
-      level: probe.status === 'fail' ? 'block' : 'warn',
+      level: probe.severity,
       status: probe.status === 'fail' ? 'fail' : 'pass',
       message: probe.message,
-    };
-    const items = [...pre.items.filter((i) => i.key !== 'llm'), llmItem];
+    });
+
     return { ok: !items.some((i) => i.level === 'block' && i.status === 'fail'), items };
   }
 

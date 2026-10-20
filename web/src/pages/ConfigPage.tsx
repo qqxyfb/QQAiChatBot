@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { AutoComplete, Button, Card, Divider, Form, Input, InputNumber, Select, Space, Switch, Table, message, theme } from 'antd';
+import { Alert, AutoComplete, Button, Card, Divider, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, message, theme } from 'antd';
 import { api } from '../api/client';
+import ModelAutoComplete from '../components/ModelAutoComplete';
 import type { GlobalConfig } from '../types';
 
 export default function ConfigPage() {
   const [form] = Form.useForm();
-  const [testResult, setTestResult] = useState('');
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string; detail?: string } | null>(null);
   const [ttsResult, setTtsResult] = useState('');
   const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
   const { token } = theme.useToken();
@@ -50,15 +51,20 @@ export default function ConfigPage() {
   }
 
   async function testLlm() {
+    setTestResult(null);
     try {
       const v = form.getFieldsValue();
-      const r = await api.post<{ ok: boolean; message: string; latencyMs: number }>(
+      const r = await api.post<{ ok: boolean; message: string; latencyMs: number; detail?: string }>(
         '/api/config/test-llm',
         v.llm
       );
-      setTestResult(`${r.ok ? '成功' : '失败'} · ${r.message} · ${r.latencyMs}ms`);
+      setTestResult({
+        ok: r.ok,
+        text: `${r.ok ? '成功' : '失败'} · ${r.message} · ${r.latencyMs}ms`,
+        detail: r.detail,
+      });
     } catch (e) {
-      setTestResult(`失败 · ${(e as Error).message}`);
+      setTestResult({ ok: false, text: `失败 · ${(e as Error).message}` });
     }
   }
 
@@ -93,8 +99,19 @@ export default function ConfigPage() {
         <Form.Item name={['llm', 'apiKey']} label="API Key" extra="本地回显真实值，点右侧图标可切换明文/密文">
           <Input.Password visibilityToggle placeholder="sk-..." />
         </Form.Item>
-        <Form.Item name={['llm', 'model']} label="模型" rules={[{ required: true }]}>
-          <Input placeholder="deepseek-chat" />
+        <Form.Item
+          name={['llm', 'model']}
+          label="模型"
+          rules={[{ required: true }]}
+          extra="可手填，也可点「获取模型」从服务端 /v1/models 拉取候选"
+        >
+          <ModelAutoComplete
+            placeholder="deepseek-chat"
+            getCredentials={() => {
+              const v = form.getFieldsValue();
+              return { baseUrl: v?.llm?.baseUrl, apiKey: v?.llm?.apiKey };
+            }}
+          />
         </Form.Item>
         <Space size="large">
           <Form.Item name={['llm', 'temperature']} label="Temperature">
@@ -104,7 +121,63 @@ export default function ConfigPage() {
             <InputNumber min={1} max={8192} />
           </Form.Item>
         </Space>
-        {testResult && <div style={{ marginBottom: 12, color: token.colorTextSecondary }}>{testResult}</div>}
+        {testResult && (
+          <Alert
+            style={{ marginBottom: 12 }}
+            type={testResult.ok ? 'success' : 'error'}
+            showIcon
+            message={testResult.ok ? 'LLM 测试通过' : 'LLM 测试未通过'}
+            description={
+              <div>
+                <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{testResult.text}</div>
+                {testResult.detail && (
+                  <div
+                    style={{
+                      marginTop: 8,
+                      maxHeight: 160,
+                      overflow: 'auto',
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-all',
+                      fontSize: 12,
+                      color: token.colorTextSecondary,
+                    }}
+                  >
+                    {testResult.detail}
+                  </div>
+                )}
+                {testResult.text.length > 120 && (
+                  <Button
+                    size="small"
+                    type="link"
+                    style={{ paddingLeft: 0 }}
+                    onClick={() =>
+                      Modal.info({
+                        title: 'LLM 测试详情',
+                        width: 720,
+                        content: (
+                          <div
+                            style={{
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-all',
+                              maxHeight: 420,
+                              overflow: 'auto',
+                              userSelect: 'text',
+                            }}
+                          >
+                            {testResult.text}
+                            {testResult.detail ? `\n\n----- 上游原始响应 -----\n${testResult.detail}` : ''}
+                          </div>
+                        ),
+                      })
+                    }
+                  >
+                    查看完整错误
+                  </Button>
+                )}
+              </div>
+            }
+          />
+        )}
 
         <Divider orientation="left">TTS 默认配置（语音回复）</Divider>
         <Space size="large" wrap>

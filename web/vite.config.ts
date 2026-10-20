@@ -7,7 +7,8 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: 'dist',
-    emptyOutDir: false,
+    // 清理旧产物：hash 文件名每次构建都会变，不清理会残留历史 chunk 被打进安装包
+    emptyOutDir: true,
   },
   server: {
     port: 5173,

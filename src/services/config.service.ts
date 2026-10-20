@@ -18,6 +18,16 @@ export function normalizeLlmBase(baseUrl: string): string {
 export interface LlmProbe {
   status: 'pass' | 'fail' | 'skip';
   message: string;
+  /** block=阻断启动；warn=仅提示，允许继续启动 */
+  severity: 'block' | 'warn';
+}
+
+export interface LlmModelsResult {
+  ok: boolean;
+  models: string[];
+  message: string;
+  latencyMs: number;
+  baseUrl: string;
 }
 
 export class ConfigService {
@@ -129,14 +139,20 @@ export class ConfigService {
     return errors;
   }
 
-  /** 测试 LLM 连接（最小请求） */
-  async testLlm(cfg: LlmConfig): Promise<{ ok: boolean; status?: number; latencyMs: number; message: string }> {
+  /**
+   * 测试 LLM 连接（最小请求）。
+   * 失败时把上游的完整报错带回来 —— 只回 "HTTP 400" 用户根本不知道是模型名写错还是额度不足。
+   */
+  async testLlm(
+    cfg: LlmConfig
+  ): Promise<{ ok: boolean; status?: number; latencyMs: number; message: string; detail?: string; models?: string[] }> {
     const t0 = Date.now();
     if (!cfg.apiKey) return { ok: false, latencyMs: 0, message: '未配置 API Key' };
     const base = normalizeLlmBase(cfg.baseUrl);
+    if (!base) return { ok: false, latencyMs: 0, message: 'LLM Base URL 为空' };
     const url = `${base}/chat/completions`;
     try {
-      const resp = await fetch(url, {
+      const resp = await httpFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
         body: JSON.stringify({
@@ -144,16 +160,90 @@ export class ConfigService {
           max_tokens: 8,
           messages: [{ role: 'user', content: 'ping' }],
         }),
-        signal: AbortSignal.timeout(10000),
+        timeoutMs: 12000,
       });
+      if (resp.ok) {
+        return { ok: true, status: resp.status, latencyMs: Date.now() - t0, message: '连接成功' };
+      }
+      const raw = await resp.text().catch(() => '');
+      const detail = extractUpstreamError(raw);
+      const latencyMs = Date.now() - t0;
+      const hint = statusHint(resp.status);
+
+      // 模型相关报错时顺手拉一次模型列表，直接把「可选项」摆到用户面前
+      let models: string[] | undefined;
+      if (resp.status === 400 || resp.status === 404) {
+        const listed = await this.listModels(cfg).catch(() => null);
+        if (listed?.ok && listed.models.length) models = listed.models;
+      }
+      const optionText =
+        models?.length && !/可选/.test(detail)
+          ? `\n可选模型（${models.length}）：${models.slice(0, 12).join(', ')}${models.length > 12 ? ' …' : ''}`
+          : '';
       return {
-        ok: resp.status === 200,
+        ok: false,
         status: resp.status,
-        latencyMs: Date.now() - t0,
-        message: resp.status === 200 ? '连接成功' : `HTTP ${resp.status}`,
+        latencyMs,
+        message: `${hint}${detail ? `：${detail}` : ''}${optionText}`,
+        detail: raw.slice(0, 1200) || undefined,
+        models,
       };
     } catch (e) {
-      return { ok: false, latencyMs: Date.now() - t0, message: (e as Error).message };
+      return { ok: false, latencyMs: Date.now() - t0, message: `请求失败：${describeError(e)}` };
+    }
+  }
+
+  /**
+   * 拉取模型列表（OpenAI 兼容 /v1/models）。
+   * 前端用它做「可选模型」下拉，避免用户凭记忆手填模型名。
+   */
+  async listModels(cfg: Pick<LlmConfig, 'baseUrl' | 'apiKey'>): Promise<LlmModelsResult> {
+    const t0 = Date.now();
+    const base = normalizeLlmBase(cfg.baseUrl);
+    const fail = (message: string): LlmModelsResult => ({
+      ok: false,
+      models: [],
+      message,
+      latencyMs: Date.now() - t0,
+      baseUrl: base,
+    });
+    if (!base) return fail('LLM Base URL 为空');
+    const headers: Record<string, string> = {};
+    if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+    try {
+      const resp = await httpFetch(`${base}/models`, { headers, timeoutMs: 10000 });
+      const raw = await resp.text().catch(() => '');
+      if (resp.status === 404 || resp.status === 405) {
+        return fail(`该服务未提供 /models 接口（HTTP ${resp.status}），请手动填写模型名`);
+      }
+      if (resp.status === 401 || resp.status === 403) {
+        return fail(`鉴权失败（HTTP ${resp.status}）：API Key 不正确或已失效`);
+      }
+      if (!resp.ok) {
+        return fail(`获取模型失败（HTTP ${resp.status}）${extractUpstreamError(raw) ? `：${extractUpstreamError(raw)}` : ''}`);
+      }
+      let models: string[] = [];
+      try {
+        const j = JSON.parse(raw) as { data?: Array<{ id?: string }>; models?: Array<{ id?: string } | string> };
+        if (Array.isArray(j.data)) {
+          models = j.data.map((m) => String(m?.id ?? '')).filter(Boolean);
+        } else if (Array.isArray(j.models)) {
+          models = j.models.map((m) => (typeof m === 'string' ? m : String(m?.id ?? ''))).filter(Boolean);
+        }
+      } catch {
+        return fail('服务返回的不是 JSON，无法解析模型列表');
+      }
+      if (!models.length) return fail('服务返回的模型列表为空');
+      models = [...new Set(models)].sort((a, b) => a.localeCompare(b));
+      return {
+        ok: true,
+        models,
+        message: `已获取 ${models.length} 个模型`,
+        latencyMs: Date.now() - t0,
+        baseUrl: base,
+      };
+    } catch (e) {
+      return fail(`请求失败：${describeError(e)}`);
     }
   }
 
@@ -161,11 +251,17 @@ export class ConfigService {
    * 启动前置探测：LLM 端点连通性 + 模型是否真实存在。
    * 目的：把「running 但完全静默」提前变成「启动失败 + 明确原因」。
    * 未配置 API Key 时跳过（演示模式）；代理不支持 /models 时降级为仅探通。
+   *
+   * 注意：模型名不在 /models 列表里只作为「警告」，不阻断启动。
+   * 很多中转站（含本地 wb2api）的 /models 并不完整，或者用别名映射，
+   * 严格拦截会把能用的情况也挡在门外。
    */
   async probeLlm(cfg: LlmConfig): Promise<LlmProbe> {
     const base = normalizeLlmBase(cfg.baseUrl);
-    if (!base) return { status: 'fail', message: 'LLM Base URL 为空' };
-    if (!cfg.apiKey) return { status: 'skip', message: '未配置 LLM API Key，将使用演示模式' };
+    if (!base) return { status: 'fail', severity: 'block', message: 'LLM Base URL 为空' };
+    if (!cfg.apiKey) {
+      return { status: 'skip', severity: 'warn', message: '未配置 LLM API Key，将使用演示模式' };
+    }
 
     try {
       const resp = await httpFetch(`${base}/models`, {
@@ -173,12 +269,18 @@ export class ConfigService {
         timeoutMs: 8000,
       });
       if (resp.status === 404 || resp.status === 405) {
-        return { status: 'pass', message: `LLM 端点可达（${base}，不支持 /models，跳过模型校验）` };
+        return {
+          status: 'pass',
+          severity: 'warn',
+          message: `LLM 端点可达（${base}，不支持 /models，跳过模型校验）`,
+        };
       }
       if (resp.status === 401 || resp.status === 403) {
-        return { status: 'fail', message: `LLM 鉴权失败：HTTP ${resp.status}，请检查 API Key` };
+        return { status: 'fail', severity: 'block', message: `LLM 鉴权失败：HTTP ${resp.status}，请检查 API Key` };
       }
-      if (!resp.ok) return { status: 'fail', message: `LLM 请求失败：HTTP ${resp.status}` };
+      if (!resp.ok) {
+        return { status: 'fail', severity: 'block', message: `LLM 请求失败：HTTP ${resp.status}` };
+      }
 
       let models: string[] = [];
       try {
@@ -191,12 +293,43 @@ export class ConfigService {
         const shown = models.slice(0, 8).join(', ');
         return {
           status: 'fail',
-          message: `模型 ${cfg.model} 不存在，可选：${shown}${models.length > 8 ? ' …' : ''}`,
+          severity: 'warn',
+          message:
+            `模型 ${cfg.model} 不在服务端模型列表中（仍可尝试启动，若回复异常请改成下面的名字）\n` +
+            `可选：${shown}${models.length > 8 ? ` …（共 ${models.length} 个）` : ''}`,
         };
       }
-      return { status: 'pass', message: `LLM 可用（${base}，模型 ${cfg.model}）` };
+      return { status: 'pass', severity: 'warn', message: `LLM 可用（${base}，模型 ${cfg.model}）` };
     } catch (e) {
-      return { status: 'fail', message: `LLM 不可达：${describeError(e)}` };
+      return { status: 'fail', severity: 'block', message: `LLM 不可达：${describeError(e)}` };
     }
   }
+}
+
+/** 从 OpenAI 兼容错误响应里取出可读信息 */
+function extractUpstreamError(raw: string): string {
+  const text = (raw || '').trim();
+  if (!text) return '';
+  try {
+    const j = JSON.parse(text) as {
+      error?: { message?: string; type?: string; code?: string } | string;
+      message?: string;
+    };
+    if (typeof j.error === 'string') return j.error.slice(0, 500);
+    if (j.error?.message) return j.error.message.slice(0, 500);
+    if (j.message) return j.message.slice(0, 500);
+  } catch {
+    /* 非 JSON，直接截断原文 */
+  }
+  return text.slice(0, 500);
+}
+
+function statusHint(status: number): string {
+  if (status === 400) return '请求被拒（HTTP 400，常见原因：模型名不存在 / 参数不被支持）';
+  if (status === 401) return '鉴权失败（HTTP 401）：API Key 不正确或已失效';
+  if (status === 403) return '无权限（HTTP 403）：Key 没有该模型的访问权限';
+  if (status === 404) return '接口或模型不存在（HTTP 404）：请检查 Base URL 是否以 /v1 结尾、模型名是否正确';
+  if (status === 429) return '触发限流（HTTP 429）：请求过快或额度用尽';
+  if (status >= 500) return `服务端错误（HTTP ${status}）`;
+  return `请求失败（HTTP ${status}）`;
 }

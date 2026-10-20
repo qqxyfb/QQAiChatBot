@@ -7,15 +7,22 @@ import type {
   Persona,
   ReplyPayload,
   Segment,
+  StickerPolicy,
   TtsConfig,
 } from '../types';
 import type { CachedBanwords, StickerIndex } from '../db/repos';
 import type { ContextManager } from './context';
 import type { RateLimiter, TokenBudget } from './limits';
-import { AccessControl, FALLBACK_REPLY, PromptBuilder, SafetyFilter, TriggerDecision } from './steps';
+import { AccessControl, FALLBACK_REPLY, PromptBuilder, ReplyQuote, SafetyFilter, TriggerDecision } from './steps';
 import type { LlmGateway, LlmResult } from '../llm/gateway';
 import { shortHash } from '../utils/hash';
-import { DEFAULT_SET_ID, MediaPlanner } from './media-planner';
+import {
+  DEFAULT_SET_ID,
+  MediaPlanner,
+  normalizeStickerPolicy,
+  stickerCooldownLeft,
+  stickerPromptHint,
+} from './media-planner';
 
 export interface PipelineDeps {
   connectionId: string;
@@ -42,6 +49,8 @@ export interface PipelineDeps {
 /** 核心链路：每连接一个独立实例 */
 export class Pipeline {
   private chat: ChatConfig;
+  /** 每个会话（群 / 对象）上次发表情包的时间，用于冷却与 prompt 收敛 */
+  private stickerLastAt = new Map<string, number>();
 
   constructor(private d: PipelineDeps) {
     this.chat = d.chat;
@@ -50,6 +59,16 @@ export class Pipeline {
   /** 配置热更新：替换聊天配置，无需重建 pipeline（上下文等运行态保留） */
   setChat(chat: ChatConfig): void {
     this.chat = chat;
+  }
+
+  /** 记录表情包发送时间，惰性淘汰老会话，避免长期运行 Map 无限增长 */
+  private markStickerSent(key: string): void {
+    this.stickerLastAt.set(key, Date.now());
+    if (this.stickerLastAt.size <= 2000) return;
+    const stale = [...this.stickerLastAt.entries()]
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, this.stickerLastAt.size - 1500);
+    for (const [k] of stale) this.stickerLastAt.delete(k);
   }
 
   /** 链路日志：统一出口，source 固定 pipeline，方便前端按来源筛选 */
@@ -117,7 +136,28 @@ export class Pipeline {
 
     // ⑤ 组装 prompt（注入表情包标签枚举，让 LLM 可输出 [sticker:标签]）
     const stickerSet = persona.stickerSet ?? DEFAULT_SET_ID;
-    const prompt = PromptBuilder.build(persona.profilePrompt, history, checked.text, d.getStickerTags(stickerSet));
+    const policy = normalizeStickerPolicy(persona.sticker);
+    const chatKey = `${m.channel}:${m.groupId ?? m.fromId}`;
+    const lastStickerAt = this.stickerLastAt.get(chatKey) ?? 0;
+    /** 冷却中 / 关闭时干脆不给标签：LLM 看不到枚举就不会想发，这是最有效的降频手段 */
+    const cooldownLeft = stickerCooldownLeft(policy, lastStickerAt);
+    const stickerBlocked = !policy.enabled || cooldownLeft > 0;
+    const stickerTags = stickerBlocked ? [] : d.getStickerTags(stickerSet);
+    if (stickerBlocked) {
+      this.log(
+        'DEBUG',
+        !policy.enabled
+          ? '表情包已关闭，本条不在 prompt 中提供标签'
+          : `表情包冷却中（剩余 ${cooldownLeft}s），本条不在 prompt 中提供标签`
+      );
+    }
+    const prompt = PromptBuilder.build(
+      persona.profilePrompt,
+      history,
+      checked.text,
+      stickerTags,
+      stickerPromptHint(policy)
+    );
 
     // ⑥ LLM 调用
     const llm = d.createLlm();
@@ -154,8 +194,17 @@ export class Pipeline {
     // ⑦ 安全（出）
     const out = res.ok ? SafetyFilter.checkOut(res.text, banwords, personaBanned) : res.text;
 
-    // ⑧ 媒体决策与装配（两级选择表情包）
-    const plan = MediaPlanner.plan(out, stickerSet, d.getStickerIndex());
+    // ⑧ 媒体决策与装配（两级选择表情包 + 频率闸门）
+    const plan = MediaPlanner.plan(out, stickerSet, d.getStickerIndex(), {
+      policy,
+      lastSentAt: lastStickerAt,
+    });
+    if (plan.sticker) {
+      this.markStickerSent(chatKey);
+      this.log('DEBUG', `发表情包：${plan.reason ?? ''}`);
+    } else if (plan.reason) {
+      this.log('DEBUG', `本条不发图：${plan.reason}`);
+    }
 
     // ⑧.1 语音附加（人格开启 voice 且本条为文字回复时，对文字做 TTS）
     if (plan.hasText && persona.voice?.enabled) {
@@ -166,12 +215,25 @@ export class Pipeline {
       else this.log('WARN', '语音生成失败，已降级为纯文字回复');
     }
 
+    // ⑧.2 空消息兜底：模型只输出了 [sticker:标签] 且被频率闸门拦下时，
+    // 绝不能发一条空消息出去（QQ 会报错/用户看不到任何东西）
+    let replyText = plan.text;
+    if (plan.segments.length === 0) {
+      replyText = '……';
+      plan.segments.push({ type: 'text', text: replyText });
+      this.log('WARN', '本条只有表情包标记且被频率控制拦下，已改为文字占位（可在人格里调高表情包概率）');
+    }
+
     // ⑨ 回复 + 打点
     const finish: FinishReason = res.stub ? 'stub' : res.ok ? 'normal' : 'error';
-    await this.reply(m, plan.text, finish, res, t0, plan.segments);
+    // 聊天记录要能看出「发了哪张图」：表情包只存在于 segments，正文里已被剥掉，
+    // 若不补标记，纯表情包回复在记录里就是一片空白
+    const historyText =
+      plan.sticker && plan.tag ? `${replyText}${replyText ? ' ' : ''}[表情包:${plan.tag}]` : replyText;
+    await this.reply(m, replyText, finish, res, t0, plan.segments, historyText);
 
     // 上下文更新（写入已 getOrCreate 的 buffer；表情包不入上下文，只存纯文本）
-    buf.push({ role: 'user', content: m.content }, { role: 'assistant', content: plan.text });
+    buf.push({ role: 'user', content: m.content }, { role: 'assistant', content: plan.text || '[表情包]' });
   }
 
   private async reply(
@@ -180,19 +242,29 @@ export class Pipeline {
     finishReason: FinishReason,
     llm: LlmResult | null,
     t0: number,
-    segments?: Segment[]
+    segments?: Segment[],
+    /** 落库用文本（可含 [表情包:标签] 标记），缺省等同 text */
+    historyText?: string
   ): Promise<void> {
     const d = this.d;
+    const quote = ReplyQuote.evaluate(m, this.chat);
     try {
       await d.sendReply({
         messageId: m.messageId,
         content: text,
         segments,
+        // 群聊被 @ 时引用原消息，群里才看得出在回谁；私聊不带
+        quoteMessageId: quote.quote ? m.messageId : undefined,
         channel: m.channel,
         fromId: m.fromId,
         groupId: m.groupId,
       });
-      this.log('INFO', `回复已发送（${text.length} 字，总耗时 ${Date.now() - t0}ms，${finishReason}）`);
+      this.log(
+        'INFO',
+        `回复已发送（${text.length} 字，总耗时 ${Date.now() - t0}ms，${finishReason}${
+          quote.quote ? '，引用回复' : ''
+        }）`
+      );
     } catch (e) {
       this.log('WARN', `回复发送失败：${(e as Error).message}`);
     }
@@ -206,7 +278,7 @@ export class Pipeline {
       groupHash: shortHash(m.groupId),
       direction: 'out',
       content: m.content,
-      reply: text,
+      reply: historyText ?? text,
       finishReason,
       latencyMs: Date.now() - t0,
       promptTokens: llm?.promptTokens ?? 0,
